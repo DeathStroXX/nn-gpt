@@ -110,13 +110,120 @@ class Net(nn.Module):
         return x
 
     def train_setup(self, prm):
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(
-            self.parameters(), 
-            lr=prm.get('lr', 0.01), 
-            momentum=prm.get('momentum', 0.9)
-        )
-        return self.optimizer
+            optim_type = prm.get('optim', 'Adam')
+            if optim_type == 'Adam':
+                self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001, weight_decay=0.0001)
+            elif optim_type == 'SGD':
+                self.optimizer = torch.optim.SGD(self.parameters(), lr=0.01, momentum=0.9)
+            elif optim_type == 'RMSprop':
+                self.optimizer = torch.optim.RMSprop(self.parameters(), lr=0.001, weight_decay=0.0001)
+            elif optim_type == 'AdamW':
+                self.optimizer = torch.optim.AdamW(self.parameters(), lr=0.001)
+            else:
+                raise ValueError(f"Invalid optimizer: {optim_type}")
+    
+            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.1)
+    
+            self.criterion = nn.CrossEntropyLoss()
+            return self.optimizer
+    ### END
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
+    ##########
 
     def learn(self, train_data):
         self.train()
