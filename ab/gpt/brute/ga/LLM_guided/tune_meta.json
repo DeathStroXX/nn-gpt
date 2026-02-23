@@ -12,7 +12,7 @@
                 "containers": [
                     {
                         "args": [
-                            "pip install git+https://github.com/ABrain-One/nn-dataset --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && cd /a/mm/ab/gpt/brute/ga/LLM_guided && python3 -u run_mut_evolution.py"
+                            "pip install git+https://github.com/ABrain-One/nn-dataset --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && site_pkg=$(python3 -c 'import site; print(site.getusersitepackages())') && mkdir -p /a/mm/ab/nn && cp -rn $site_pkg/ab/nn/* /a/mm/ab/nn/ || true && cd /a/mm/ab/gpt/brute/ga/LLM_guided && python3 -u run_mut_evolution.py"
                         ],
                         "securityContext": {
                             "allowPrivilegeEscalation": false,
