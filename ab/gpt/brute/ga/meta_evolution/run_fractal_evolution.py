@@ -5,9 +5,8 @@ import json
 import time
 from contextlib import contextmanager
 import sys
+
 # FIX MODULE PATH: Add repo root to sys.path
-# .../ab/gpt/brute/ga/meta_evolution/run_fractal_evolution.py -> .../ -> .../ -> .../ -> .../ -> .../ (5 levels up)
-# But safer to just add the root '/a/mm' if we know it, or relative.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
 if repo_root not in sys.path:
@@ -25,12 +24,11 @@ def suppress_output():
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-import socket
+
 import torch
 from ab.gpt.brute.ga.meta_evolution.genetic_algorithm import GeneticAlgorithm
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
-from ab.gpt.iterative_pipeline.gpu_memory_manager import get_gpu_memory_info
 
 import logging
 
@@ -47,29 +45,32 @@ CHECKPOINT = 'fractal_ga_ckpt.pkl'
 os.makedirs(ARCH_DIR, exist_ok=True)
 os.makedirs(STATS_DIR, exist_ok=True)
 
+seen_checksums = set()
 
-seen_hashes = set()
+def uuid4(s: str) -> str:
+    return hashlib.md5(s.encode()).hexdigest()
 
-def get_hash(s): return hashlib.md5(s.encode()).hexdigest()
-
-def fitness_function(chromosome):
+def fitness_function(chromosome: dict) -> float:
     try:
         # 1. Generate Source Code
         code_str = generate_model_code_string(chromosome)
-        code_hash = get_hash(code_str)
+        
+        # New uuid4 checksum matching LLM_guided
+        model_checksum = uuid4(code_str)
         
         # Deduplication
-        if code_hash in seen_hashes: return 0.0
+        if model_checksum in seen_checksums:
+            print(f"  - Duplicate (checksum: {model_checksum[:8]}) -> skip")
+            return 0.0
+            
+        print(f"  - Evaluating unique arch (checksum: {model_checksum[:8]}...)")
         
         # 2. Save Model File to ARCH_DIR
-        model_name = f"fractal_ga_{code_hash[:8]}"
+        model_name = f"img-classification_cifar-10_FractalNet-{model_checksum}"
         filepath = os.path.join(ARCH_DIR, f"{model_name}.py")
         
-        # Save to execution dir
         with open(filepath, 'w') as f: 
             f.write(code_str)
-            
-
             
         # 3. Evaluate
         eval_prm = {
@@ -80,8 +81,7 @@ def fitness_function(chromosome):
             'transform': "norm_256_flip" 
         }
         
-        stats_path = os.path.join(STATS_DIR, f"stats_{model_name}")
-        
+        # We don't need `Eval` to make its own subfolder if we want a flat JSON
         evaluator = Eval(
             model_source_package=ARCH_DIR,
             task='img-classification',
@@ -90,108 +90,67 @@ def fitness_function(chromosome):
             prm=eval_prm,
             save_to_db=False,
             prefix=model_name,
-            save_path=stats_path
+            save_path=None 
         )
         
-        start_time = time.time()
-        # with suppress_output(): 
-        res = evaluator.evaluate(filepath)
-        end_time = time.time()
+        result = evaluator.evaluate(filepath)
         
-        acc = 0.0
-        if isinstance(res, dict): acc = res.get('accuracy', 0.0)
-        elif isinstance(res, (float, int)): acc = float(res)
-        elif isinstance(res, tuple): acc = float(res[1])
-        
-        seen_hashes.add(code_hash)
-        
-        # Capture GPU and System Stats using Standard Utility
-        total_gb, used_gb, free_gb = get_gpu_memory_info()
-        gpu_info = {
-            "total_memory_gb": total_gb,
-            "used_memory_gb": used_gb,
-            "free_memory_gb": free_gb,
-            "device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "Unknown"
-        }
-
-        stats_data = {
-            "model_name": model_name,
-            "hash": code_hash,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_seconds": end_time - start_time,
-            "accuracy": acc * 100,
-            "chromosome": chromosome,
-            "gpu_stats": gpu_info,
-            "hostname": socket.gethostname()
-        }
-
-        # Merge full evaluation results from training_summary.json if available
-        # The return value 'res' is often incomplete.
+        # Fetch the most comprehensive stats from training_summary.json
         summary_path = os.path.join(os.getcwd(), 'out', 'training_summary.json')
         full_res = {}
         if os.path.exists(summary_path):
             try:
                 with open(summary_path, 'r') as f:
                     full_res = json.load(f)
-                    stats_data.update(full_res)
             except Exception as e:
                 print(f"Failed to read training summary: {e}")
-        elif isinstance(res, dict):
-             # Fallback to result dict if file missing
-             full_res = res
-             stats_data.update(res)
+        elif isinstance(result, dict):
+            full_res = result
 
-        # Save stats dictionary to a JSON file
-        model_stats_dir = os.path.join(STATS_DIR, model_name)
-        os.makedirs(model_stats_dir, exist_ok=True)
+        # Ensure uid is exactly the checksum
+        full_res['uid'] = model_checksum
         
-        # Save aggregate stats
-        stats_file_json = os.path.join(model_stats_dir, "stats.json")
-        # with open(stats_file_json, 'w') as f:
-        #     json.dump(stats_data, f, indent=4)
+        # Extract the correct epoch size to use for the file name (e.g. 1.json, 2.json...)
+        max_epochs = eval_prm.get('epoch', 1)
+        if 'epoch_max' in full_res:
+            max_epochs = full_res['epoch_max']
+        elif 'training_summary' in full_res and 'total_epochs' in full_res['training_summary']:
+            max_epochs = full_res['training_summary']['total_epochs']
             
-        # Save per-epoch stats if available
-        # Check both top-level keys and nested structures which vary by Eval version
-        epoch_data = full_res.get('epoch_details')
-        if not epoch_data and 'learning_curves' in full_res:
-             # Construct epoch details from learning curves if strictly separated
-             lc = full_res['learning_curves']
-             epochs = lc.get('epochs', [])
-             train_loss = lc.get('train_loss', [])
-             test_loss = lc.get('test_loss', [])
-             epoch_data = []
-             for i, ep in enumerate(epochs):
-                 epoch_data.append({
-                     'epoch': ep,
-                     'train_loss': train_loss[i] if i < len(train_loss) else None,
-                     'test_loss': test_loss[i] if i < len(test_loss) else None
-                 })
+        # Save exact requested stats format to a JSON folder structure
+        model_stats_dir_name = f"img-classification_cifar_FractalNet-{model_checksum}"
+        model_stats_dir_path = os.path.join(STATS_DIR, model_stats_dir_name)
+        os.makedirs(model_stats_dir_path, exist_ok=True)
+        
+        stat_file = os.path.join(model_stats_dir_path, f"{max_epochs}.json")
+        with open(stat_file, 'w') as sf:
+            json.dump(full_res, sf, indent=4)
 
-        if epoch_data:
-            for epoch_stat in epoch_data:
-                ep_num = epoch_stat.get('epoch', 'unknown')
-                
-                # Inject UID/Hash into the epoch file
-                ep_stat_copy = epoch_stat.copy()
-                if 'uid' in full_res:
-                    ep_stat_copy['uid'] = full_res['uid']
-                else:
-                    ep_stat_copy['uid'] = code_hash
-                
-                ep_file = os.path.join(model_stats_dir, f"{ep_num}.json")
-                with open(ep_file, 'w') as f:
-                    json.dump(ep_stat_copy, f, indent=4)
+        final_accuracy = 0.0
+        if 'accuracy' in full_res:
+            final_accuracy = full_res['accuracy'] * 100
+        elif 'best_accuracy' in full_res:
+            final_accuracy = full_res['best_accuracy'] * 100
+        elif isinstance(result, tuple) and len(result) >= 2:
+            final_accuracy = float(result[1]) * 100
+        elif isinstance(result, float):
+            final_accuracy = result * 100
+        elif result is not None:
+            try:
+                final_accuracy = float(result) * 100
+            except:
+                pass
 
-        # Store accuracy in chromosome for later "best" retrieval
-        print(f"  Model Path: {filepath}")
-        print(f"  Stats Path: {stats_file_json}")
-        print("\n" + "="*50)
-        print(f" >>> FITNESS SCORE (Accuracy): {acc * 100:.4f}% <<<")
-        print("="*50 + "\n")
-        chromosome['accuracy'] = acc * 100
-        return acc * 100 
+        print(f"  - Eval result: {final_accuracy:.2f}%")
+        seen_checksums.add(model_checksum)
+        
+        chromosome['accuracy'] = float(final_accuracy)
+        
+        return final_accuracy
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Eval Fail: {e}")
         return 0.0
 
@@ -222,7 +181,6 @@ if __name__ == "__main__":
              best_path = os.path.join(BASE_DIR, "best_fractal_model.py")
              with open(best_path, "w") as f:
                  f.write(best_code)
-             # print(f"Saved best model to {best_path}") # Keep silent for meta-score parsing
 
         # Meta-Score Calculation
         if history:
@@ -234,6 +192,6 @@ if __name__ == "__main__":
             
         print(f"META_SCORE: {meta_score:.4f}")
 
-    except Exception:
+    except Exception as e:
         # print(f"CRITICAL GA FAIL: {e}")
         print("META_SCORE: 0.0")
