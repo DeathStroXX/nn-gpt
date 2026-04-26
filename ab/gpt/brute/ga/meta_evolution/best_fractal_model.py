@@ -64,7 +64,7 @@ class Net(nn.Module):
         trans_layers = []
         cur_chan = 64
         for i in range(3):
-            blocks.append(FractalBlock(3, cur_chan, 0.0))
+            blocks.append(FractalBlock(2, cur_chan, 0.1))
             pools.append(nn.MaxPool2d(2))
             if i < 3 - 1:
                 next_chan = cur_chan * 2

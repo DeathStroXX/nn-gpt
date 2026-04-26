@@ -54,8 +54,8 @@ seen_checksums = set()
 def _load_existing_checksums():
     """Scan stats/ directory for previously evaluated models to avoid re-evaluation."""
     count = 0
-    # prefix = "img-classification_cifar_FractalNet-"   # BUG: missing '-10', never matched any folder
-    prefix = "img-classification_cifar-10_FractalNet-"
+    # prefix = "img-classification_cifar_GenFractalNet-"   # BUG: missing '-10', never matched any folder
+    prefix = "img-classification_cifar-10_GenFractalNet-"
     if os.path.isdir(STATS_DIR):
         for name in os.listdir(STATS_DIR):
             if name.startswith(prefix):
@@ -73,7 +73,7 @@ def _lookup_stored_fitness(checksum: str) -> float:
     from the stats/ folder instead of returning 0.0.
     Returns fitness as a percentage (e.g. 54.69), or 0.0 if the file is missing/unreadable.
     """
-    stats_dir_name = f"img-classification_cifar-10_FractalNet-{checksum}"
+    stats_dir_name = f"img-classification_cifar-10_GenFractalNet-{checksum}"
     stats_dir_path = os.path.join(STATS_DIR, stats_dir_name)
     if not os.path.isdir(stats_dir_path):
         print(f"  - Duplicate: no stored stats found for {checksum[:8]}, returning 0.0")
@@ -122,6 +122,10 @@ def uuid4(s: str) -> str:
 
 def fitness_function(chromosome: dict) -> float:
     try:
+        # --- Sentinel variables for cleanup on failure ---
+        tmp_filepath = None
+        model_stats_dir_path = None
+
         # 1. Generate Source Code
         code_str = generate_model_code_string(chromosome)
         
@@ -134,11 +138,17 @@ def fitness_function(chromosome: dict) -> float:
             
         print(f"  - Evaluating unique arch (checksum: {model_checksum[:8]}...)")
         
-        # 2. Save Model File to ARCH_DIR
-        model_name = f"FractalNet-{model_checksum}"
-        filepath = os.path.join(ARCH_DIR, f"{model_name}.py")
+        # 2. Write model code to a TEMPORARY file; only persist after
+        #    evaluation succeeds and stats are verified on disk.
+        model_name = f"GenFractalNet-{model_checksum}"
+        # filepath = os.path.join(ARCH_DIR, f"{model_name}.py")
+        final_filepath = os.path.join(ARCH_DIR, f"{model_name}.py")
+        tmp_filepath = os.path.join(ARCH_DIR, f"_tmp_{model_name}.py")
+        filepath = tmp_filepath  # evaluator works on the temp file
         
-        with open(filepath, 'w') as f: 
+        # with open(filepath, 'w') as f: 
+        #     f.write(code_str)
+        with open(tmp_filepath, 'w') as f:
             f.write(code_str)
             
         # 3. Evaluate
@@ -227,7 +237,7 @@ def fitness_function(chromosome: dict) -> float:
         
         # Save exact requested stats format to a JSON folder structure
         # One JSON file per epoch: 1.json, 2.json, ..., N.json
-        model_stats_dir_name = f"img-classification_cifar-10_FractalNet-{model_checksum}"
+        model_stats_dir_name = f"img-classification_cifar-10_GenFractalNet-{model_checksum}"
         model_stats_dir_path = os.path.join(STATS_DIR, model_stats_dir_name)
         os.makedirs(model_stats_dir_path, exist_ok=True)
 
@@ -255,6 +265,21 @@ def fitness_function(chromosome: dict) -> float:
             with open(stat_file, 'w') as sf:
                 json.dump(full_res, sf, indent=4)
             print(f"  - Saved stats (fallback) to: {stat_file}")
+
+        # --- Verify at least one stats JSON was written before persisting model ---
+        _stats_json_files = [f for f in os.listdir(model_stats_dir_path) if f.endswith('.json')]
+        if not _stats_json_files:
+            print(f"  - ERROR: No stats JSON written to {model_stats_dir_path}, discarding model")
+            # Clean up partial state
+            if os.path.exists(tmp_filepath):
+                os.remove(tmp_filepath)
+            if os.path.isdir(model_stats_dir_path):
+                shutil.rmtree(model_stats_dir_path)
+            return 0.0
+
+        # Stats verified — promote temp model file to its final location
+        os.rename(tmp_filepath, final_filepath)
+        print(f"  - Model persisted to ga_fractal_arch/ (stats verified: {len(_stats_json_files)} JSON file(s))")
 
         # --- Layered accuracy extraction ---
         # Priority: top-level > hyperparameters (library writes here) >
@@ -305,6 +330,16 @@ def fitness_function(chromosome: dict) -> float:
         import traceback
         traceback.print_exc()
         print(f"Eval Fail: {e}")
+        # --- Cleanup: remove temp model file and any partial stats ---
+        try:
+            if tmp_filepath and os.path.exists(tmp_filepath):
+                os.remove(tmp_filepath)
+                print(f"  - Cleaned up temp file: {tmp_filepath}")
+            if model_stats_dir_path and os.path.isdir(model_stats_dir_path):
+                shutil.rmtree(model_stats_dir_path)
+                print(f"  - Cleaned up partial stats: {model_stats_dir_path}")
+        except Exception as cleanup_err:
+            print(f"  - Warning: cleanup failed: {cleanup_err}")
         return 0.0
 
 if __name__ == "__main__":
@@ -338,7 +373,7 @@ if __name__ == "__main__":
 
              # Copy Winning Stats
              best_checksum = uuid4(best_code)
-             best_folder_name = f"img-classification_cifar-10_FractalNet-{best_checksum}"
+             best_folder_name = f"img-classification_cifar-10_GenFractalNet-{best_checksum}"
              src_stats_path = os.path.join(STATS_DIR, best_folder_name)
              dst_stats_path = os.path.join(BEST_STATS_DIR, best_folder_name)
 
