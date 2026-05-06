@@ -1,6 +1,7 @@
 import random
 import pickle
 import os
+import copy
 import numpy as np
 
 class GeneticAlgorithm:
@@ -16,6 +17,28 @@ class GeneticAlgorithm:
     def _create_random_chromosome(self):
         return {key: random.choice(values) for key, values in self.search_space.items()}
 
+    def _coerce_gene_value(self, gene_name, value):
+        valid_values = self.search_space[gene_name]
+        if not valid_values:
+            return value
+        if value in valid_values:
+            return value
+
+        exemplar = valid_values[0]
+        if isinstance(exemplar, (int, float, np.integer, np.floating)) and isinstance(
+            value, (int, float, np.integer, np.floating)
+        ):
+            return min(valid_values, key=lambda candidate: abs(float(candidate) - float(value)))
+
+        return random.choice(valid_values)
+
+    def _sanitize_chromosome(self, chromosome):
+        sanitized = chromosome.copy()
+        for gene_name in self.search_space:
+            if gene_name in sanitized:
+                sanitized[gene_name] = self._coerce_gene_value(gene_name, sanitized[gene_name])
+        return sanitized
+
     def _initialize_population(self):
         self.population = [{'chromosome': self._create_random_chromosome(), 'fitness': None} for _ in range(self.population_size)]
 
@@ -28,7 +51,10 @@ class GeneticAlgorithm:
             try:
                 with open(self.checkpoint_path, 'rb') as f:
                     state = pickle.load(f)
-                return state['generation'], state['population']
+                population = state['population']
+                for individual in population:
+                    individual['chromosome'] = self._sanitize_chromosome(individual['chromosome'])
+                return state['generation'], population
             except: pass
         return 0, None
 
@@ -38,33 +64,36 @@ class GeneticAlgorithm:
         Decide which parent's gene to use for a child chromosome.
         Returns the chosen gene value.
         """
-        blend = (parent1_value * (total_genes - gene_index) + parent2_value * gene_index) / total_genes
-        possible = self.search_space.get(gene_name, [parent1_value, parent2_value])
-        return min(possible, key=lambda v: abs(v - blend))
+        if parent1_value == parent2_value:
+            return parent1_value
+        if gene_index < crossover_point:
+            return parent1_value
+        return random.choice([parent1_value, parent2_value])
 
     def _crossover(self, parent1_chromo, parent2_chromo):
         child_chromo = {}
         genes = list(self.search_space.keys())
         point = random.randint(1, len(genes) - 1)
         for i, gene in enumerate(genes):
-            child_chromo[gene] = self.combine_genes(
+            child_chromo[gene] = self._coerce_gene_value(
+                gene,
+                self.combine_genes(
                 gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes)
+                ),
             )
-        return child_chromo
+        return self._sanitize_chromosome(child_chromo)
     # --- END LLM: CROSSOVER ---
 
     # --- START LLM: MUTATION ---
     def mutate_gene(self, current_value, possible_values):
-        """
-        Return a new gene value.
-        """
         if not isinstance(possible_values, list):
             raise ValueError('possible_values should be a list')
         if not possible_values:
-            return
-        new_value = np.random.choice(possible_values)
-        while new_value == current_value:
-            new_value = np.random.choice(possible_values)
+            return current_value
+        import random
+        new_value = random.choice(possible_values)
+        while new_value == current_value and len(possible_values) > 1:
+            new_value = random.choice(possible_values)
         return new_value
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
@@ -72,8 +101,11 @@ class GeneticAlgorithm:
             if random.random() < self.mutation_rate:
                 possibles = [v for v in self.search_space[gene] if v != mutated_chromo[gene]]
                 if possibles:
-                    mutated_chromo[gene] = self.mutate_gene(mutated_chromo[gene], possibles)
-        return mutated_chromo
+                    mutated_chromo[gene] = self._coerce_gene_value(
+                        gene,
+                        self.mutate_gene(mutated_chromo[gene], possibles)
+                    )
+        return self._sanitize_chromosome(mutated_chromo)
     # --- END LLM: MUTATION ---
 
     # --- START LLM: SELECTION ---
@@ -83,7 +115,7 @@ class GeneticAlgorithm:
         Each competitor is a dict with 'chromosome' and 'fitness' keys.
         Returns the winning individual.
         """
-        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -1)
+        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -np.inf)
 
     def _selection(self):
         k = 3
@@ -103,8 +135,9 @@ class GeneticAlgorithm:
             print(f"\n\n >>> GENERATION {gen + 1} <<<\n")
             # Evaluate
             for i, ind in enumerate(self.population):
+                ind['chromosome'] = self._sanitize_chromosome(ind['chromosome'])
                 if ind['fitness'] is None:
-                    print(f"  Evaluating Individual {i+1}/{len(self.population)}   Iteration: {gen+1} --> Generation: {gen+1}/{num_generations}")
+                    print(f"  Evaluating Individual {i+1}/{len(self.population)} ---- Generation: {gen+1}/{num_generations}")
                     ind['fitness'] = fitness_function(ind['chromosome'])
             
             # Sort
@@ -116,8 +149,9 @@ class GeneticAlgorithm:
             if best_overall is None or current_best > best_overall['fitness']:
                 best_overall = self.population[0].copy()
 
-            # Next Gen
-            next_gen = self.population[:self.elitism_count]
+            # Next Gen (Using deepcopy to protect elites from accidental mutation)
+            # next_gen = self.population[:self.elitism_count]
+            next_gen = copy.deepcopy(self.population[:self.elitism_count])
             while len(next_gen) < self.population_size:
                 p1 = self._selection()
                 p2 = self._selection()
@@ -126,6 +160,6 @@ class GeneticAlgorithm:
                 next_gen.append({'chromosome': child, 'fitness': None})
             
             self.population = next_gen
-            # self._save_checkpoint(gen + 1)
+            self._save_checkpoint(gen + 1)
             
         return best_overall, fitness_history

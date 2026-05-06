@@ -147,7 +147,8 @@ class LocalLLMLoader:
         print(f"[LoRA] Training on {len(training_data)} examples...")
         self.model.train()
         
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
+        # optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-5) # Lowered: 2e-4 was causing mode collapse
         
         for epoch in range(epochs):
             total_loss = 0
@@ -160,8 +161,17 @@ class LocalLLMLoader:
                 if torch.cuda.is_available():
                     inputs = inputs.to("cuda")
                 
-                # Causal LM: Labels = Inputs
-                outputs = self.model(**inputs, labels=inputs["input_ids"])
+                # --- Loss Masking: only compute loss on completion tokens ---
+                # Tokenize prompt alone to find where completion starts
+                prompt_tokens = self.tokenizer(item['prompt'] + "\n", return_tensors="pt", truncation=True, max_length=self.config.get("context_length", 4096))
+                prompt_length = prompt_tokens["input_ids"].shape[1]
+                
+                labels = inputs["input_ids"].clone()
+                labels[0, :prompt_length] = -100  # Mask prompt tokens from loss
+                
+                # # Causal LM: Labels = Inputs (old: trained on full prompt+completion)
+                # outputs = self.model(**inputs, labels=inputs["input_ids"])
+                outputs = self.model(**inputs, labels=labels)
                 loss = outputs.loss
                 
                 loss.backward()

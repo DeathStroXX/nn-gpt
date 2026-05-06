@@ -9,6 +9,8 @@ stats/
 out/
 fine_tuned_adapter/
 ga_history_backup/
+logs/
+*.jsonl
 # Agent Skills & Metadata
 # .agent/
 .agents/

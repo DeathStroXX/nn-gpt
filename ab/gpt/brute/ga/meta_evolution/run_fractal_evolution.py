@@ -2,6 +2,13 @@ import os
 import argparse
 import hashlib
 import json
+
+class NumpyEncoder(json.JSONEncoder):
+    """Handle numpy scalar types that are not JSON serializable."""
+    def default(self, obj):
+        if hasattr(obj, 'item'):
+            return obj.item()
+        return super(NumpyEncoder, self).default(obj)
 import time
 import shutil
 from datetime import datetime
@@ -48,11 +55,27 @@ BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_stats')
 os.makedirs(ARCH_DIR, exist_ok=True)
 os.makedirs(STATS_DIR, exist_ok=True)
 
-seen_checksums = set()
+# seen_checksums = set()
+fitness_cache = {}
+
+def _log_eval(checksum, accuracy, is_cached):
+    log_file = os.environ.get("GA_EVAL_LOG")
+    if log_file:
+        try:
+            with open(log_file, "a") as f:
+                entry = {
+                    "uid": checksum,
+                    "accuracy": float(accuracy),
+                    "is_cached": is_cached,
+                    "timestamp": datetime.now().isoformat()
+                }
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to write GA eval log: {e}")
 
 # Persist checksums across runs: load checksums from existing stats folders
 def _load_existing_checksums():
-    """Scan stats/ directory for previously evaluated models to avoid re-evaluation."""
+    """Scan stats/ directory for previously evaluated models and cache their fitness."""
     count = 0
     # prefix = "img-classification_cifar_GenFractalNet-"   # BUG: missing '-10', never matched any folder
     prefix = "img-classification_cifar-10_GenFractalNet-"
@@ -60,7 +83,38 @@ def _load_existing_checksums():
         for name in os.listdir(STATS_DIR):
             if name.startswith(prefix):
                 checksum = name[len(prefix):]
-                seen_checksums.add(checksum)
+                # --- Read actual accuracy from the stats JSON ---
+                stats_dir_path = os.path.join(STATS_DIR, name)
+                cached_fitness = 0.0
+                json_files = sorted(
+                    [f for f in os.listdir(stats_dir_path) if f.endswith('.json')],
+                    key=lambda x: int(x.replace('.json', '')) if x.replace('.json', '').isdigit() else 0
+                )
+                if json_files:
+                    json_path = os.path.join(stats_dir_path, json_files[-1])
+                    try:
+                        with open(json_path) as f:
+                            data = json.load(f)
+                        hp = data.get('hyperparameters', {})
+                        ts = data.get('training_summary', {})
+                        for src, key in [
+                            (data, 'accuracy'), (data, 'best_accuracy'),
+                            (hp,   'accuracy'), (hp,   'best_accuracy'),
+                            (ts,   'final_accuracy'), (ts, 'best_accuracy'),
+                        ]:
+                            val = src.get(key)
+                            if val is not None:
+                                try:
+                                    fitness_val = float(val) * 100
+                                    if fitness_val > 0:
+                                        cached_fitness = fitness_val
+                                        break
+                                except (TypeError, ValueError):
+                                    pass
+                    except Exception:
+                        pass
+                # seen_checksums.add(checksum)
+                fitness_cache[checksum] = cached_fitness
                 count += 1
     if count:
         print(f"[Init] Loaded {count} existing checksums from stats/ (skipping duplicates)")
@@ -133,8 +187,12 @@ def fitness_function(chromosome: dict) -> float:
         model_checksum = uuid4(code_str)
         
         # Deduplication — look up stored fitness instead of discarding signal
-        if model_checksum in seen_checksums:
-            return _lookup_stored_fitness(model_checksum)
+        # if model_checksum in seen_checksums:
+        #     return _lookup_stored_fitness(model_checksum)
+        if model_checksum in fitness_cache:
+            print(f"  - Duplicate {model_checksum[:8]}: reusing cached fitness {fitness_cache[model_checksum]:.2f}% (from fitness_cache)")
+            _log_eval(model_checksum, fitness_cache[model_checksum], True)
+            return fitness_cache[model_checksum]
             
         print(f"  - Evaluating unique arch (checksum: {model_checksum[:8]}...)")
         
@@ -320,10 +378,12 @@ def fitness_function(chromosome: dict) -> float:
         print(f"\n  {'='*40}")
         print(f"  >>> FITNESS SCORE: {final_accuracy:.2f}%  (source: {_acc_source}, checksum: {model_checksum})")
         print(f"  {'='*40}\n")
-        seen_checksums.add(model_checksum)
+        # seen_checksums.add(model_checksum)
+        fitness_cache[model_checksum] = final_accuracy
         
         chromosome['accuracy'] = float(final_accuracy)
         
+        _log_eval(model_checksum, final_accuracy, False)
         return final_accuracy
         
     except Exception as e:
@@ -356,7 +416,8 @@ if __name__ == "__main__":
         ga = GeneticAlgorithm(
             population_size=args.pop,
             search_space=SEARCH_SPACE,
-            elitism_count=5,
+            # elitism_count=5,
+            elitism_count=max(1, int(args.pop * 0.25)),  # Dynamic: 25% of population
             mutation_rate=0.2,
             checkpoint_path=CHECKPOINT
         )
@@ -406,7 +467,7 @@ if __name__ == "__main__":
                  "copied_stats_dir": dst_stats_path
              }
              with open(info_path, "w") as f:
-                 json.dump(best_info, f, indent=4)
+                 json.dump(best_info, f, indent=4, cls=NumpyEncoder)
              print(f"[Best] Saved best info metadata to {info_path}")
 
         # Meta-Score Calculation
@@ -416,11 +477,14 @@ if __name__ == "__main__":
             meta_score = peak + (avg_imp * 1.5) 
         else:
             meta_score = 0.0
+            peak = 0.0
             
+        print(f"PEAK_ACCURACY: {peak:.4f}")
         print(f"META_SCORE: {meta_score:.4f}")
 
     except Exception as e:
         import traceback
         print(f"CRITICAL GA FAIL: {e}")
         traceback.print_exc()
+        print("PEAK_ACCURACY: 0.0")
         print("META_SCORE: 0.0")

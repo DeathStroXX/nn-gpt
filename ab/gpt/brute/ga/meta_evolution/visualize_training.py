@@ -23,6 +23,7 @@ Usage:
 import os
 import json
 import warnings
+import glob
 from datetime import datetime
 
 import matplotlib
@@ -35,7 +36,7 @@ import matplotlib.patches as mpatches
 # ---------------------------------------------------------------------------
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 STATS_DIR      = os.path.join(BASE_DIR, "stats")
-JSONL_LOG      = os.path.join(BASE_DIR, "LLM-evolution-logs.jsonl")
+LOGS_DIR       = os.path.join(BASE_DIR, "logs")
 VIZ_ROOT       = os.path.join(BASE_DIR, "visualizations")
 
 # ---------------------------------------------------------------------------
@@ -87,76 +88,59 @@ def _warn(msg):
 
 def load_stats_records():
     """
-    Scan stats/ for model JSON files.
-    Returns a list of dicts sorted by folder mtime (proxy for eval order).
-    Each dict contains: accuracy, best_accuracy, train_accuracy, train_loss,
-                        test_loss, gradient_norm, samples_per_second, uid, mtime
+    Read the latest ga_evaluations*.jsonl to get exact chronological evaluation order for the current run.
     """
     records = []
-    if not os.path.isdir(STATS_DIR):
-        _warn(f"stats/ directory not found at {STATS_DIR}")
+    log_files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations*.jsonl"))
+    if not log_files:
+        # Fallback to base dir for older logs
+        log_files = glob.glob(os.path.join(BASE_DIR, "ga_evaluations*.jsonl"))
+    if not log_files:
+        _warn("No ga_evaluations*.jsonl files found")
         return records
-    for folder in sorted(os.listdir(STATS_DIR)):
-            folder_path = os.path.join(STATS_DIR, folder)
-            if not os.path.isdir(folder_path):
-                continue
-            mtime = os.path.getmtime(folder_path)
-            # Read the most recent epoch JSON (highest numbered file)
-            json_files = sorted(
-                [f for f in os.listdir(folder_path) if f.endswith(".json")],
-                key=lambda x: int(x.replace(".json", "")) if x.replace(".json", "").isdigit() else 0
-            )
-            if not json_files:
-                continue
-            json_path = os.path.join(folder_path, json_files[-1])
+        
+    latest_log = max(log_files, key=os.path.getmtime)
+    print(f"  [Info] Loading GA eval logs from: {os.path.basename(latest_log)}")
+    
+    with open(latest_log) as f:
+        for i, line in enumerate(f):
+            line = line.strip()
+            if not line: continue
             try:
-                with open(json_path) as f:
-                    data = json.load(f)
+                data = json.loads(line)
+                # the log saves percentage (e.g. 65.4), but old code multiplied by 100
+                # so we divide by 100 here to be compatible with other plot functions
+                acc = data.get("accuracy", 0) / 100.0 
+                records.append({
+                    "uid": data.get("uid"),
+                    "accuracy": acc,
+                    "best_accuracy": acc,  # For compatibility with best_vs_avg plot
+                    "is_cached": data.get("is_cached", False)
+                })
             except Exception as e:
-                _warn(f"Could not read {json_path}: {e}")
-                continue
+                _warn(f"Could not read line {i+1} in {latest_log}: {e}")
 
-            hp = data.get("hyperparameters", {})
-            ts = data.get("training_summary", {})
-
-            def _get(*keys):
-                """Try data → hyperparameters → training_summary for each key."""
-                for k in keys:
-                    for src in [data, hp, ts]:
-                        if k in src and src[k] is not None:
-                            try:
-                                return float(src[k])
-                            except (TypeError, ValueError):
-                                pass
-                return None
-
-            rec = {
-                "uid":               data.get("uid", folder),
-                "mtime":             mtime,
-                "accuracy":          _get("accuracy"),
-                "best_accuracy":     _get("best_accuracy"),
-                "train_accuracy":    _get("train_accuracy"),
-                "train_loss":        _get("train_loss"),
-                "test_loss":         _get("test_loss"),
-                "gradient_norm":     _get("gradient_norm"),
-                "samples_per_second":_get("samples_per_second"),
-            }
-            records.append(rec)
-
-    # Sort by folder mtime → chronological eval order
-    records.sort(key=lambda r: r["mtime"])
     return records
 
 
 def load_llm_logs():
     """
-    Read LLM-evolution-logs.jsonl. Returns list of dicts.
+    Read the latest LLM-evolution-logs*.jsonl. Returns list of dicts.
     Expected fields: method, score, reward, valid_syntax, timestamp.
     """
-    if not os.path.exists(JSONL_LOG):
+    log_files = glob.glob(os.path.join(LOGS_DIR, "LLM-evolution-logs*.jsonl"))
+    if not log_files:
+        # Fallback to base dir for older logs
+        log_files = glob.glob(os.path.join(BASE_DIR, "LLM-evolution-logs*.jsonl"))
+    if not log_files:
+        _warn("No LLM-evolution-logs*.jsonl files found")
         return []
+        
+    latest_log = max(log_files, key=os.path.getmtime)
+    print(f"  [Info] Loading LLM logs from: {os.path.basename(latest_log)}")
+    
     entries = []
-    with open(JSONL_LOG) as f:
+    with open(latest_log) as f:
         for i, line in enumerate(f):
             line = line.strip()
             if not line:
@@ -178,26 +162,37 @@ def plot_generation_accuracy(records, out_dir, saved_files):
         return
 
     x = list(range(1, len(records) + 1))
-    acc     = [r["accuracy"]     * 100 if r["accuracy"]     is not None else None for r in records]
-    best    = [r["best_accuracy"] * 100 if r["best_accuracy"] is not None else None for r in records]
+    acc = [r["accuracy"] * 100 if r["accuracy"] is not None else None for r in records]
+    is_cached = [r.get("is_cached", False) for r in records]
 
-    # Filter out None positions for plotting
-    def _clean(vals):
-        xs, ys = [], []
-        for xi, yi in zip(x, vals):
-            if yi is not None:
-                xs.append(xi); ys.append(yi)
-        return xs, ys
+    # Split points into new vs cached
+    x_new, y_new = [], []
+    x_cached, y_cached = [], []
+    
+    for xi, yi, cached in zip(x, acc, is_cached):
+        if yi is not None:
+            if cached:
+                x_cached.append(xi)
+                y_cached.append(yi)
+            else:
+                x_new.append(xi)
+                y_new.append(yi)
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(10, 5))
-        xb, yb = _clean(best)
-        xa, ya = _clean(acc)
-        if xb:
-            ax.plot(xb, yb, color=ACCENT1, linewidth=2, label="Best Accuracy", marker="o", markersize=3)
-        if xa:
-            ax.plot(xa, ya, color=ACCENT2, linewidth=1.5, linestyle="--", label="Accuracy (test)", marker="s", markersize=2)
-        _apply_style(ax, "Model Accuracy Over Evaluation Order", "Model Index", "Accuracy (%)")
+        
+        # Draw a faint continuous line connecting all evaluations chronologically
+        ax.plot(x, acc, color="#ffffff", alpha=0.2, linewidth=1, zorder=1)
+        
+        # Scatter plot for newly evaluated models
+        if x_new:
+            ax.scatter(x_new, y_new, color=ACCENT1, s=40, label="New Evaluation", zorder=3, edgecolors="white", linewidths=0.5)
+            
+        # Scatter plot for cached duplicates
+        if x_cached:
+            ax.scatter(x_cached, y_cached, color="#5a6a7a", s=30, label="Cached Duplicate", zorder=2, alpha=0.6)
+            
+        _apply_style(ax, "Model Accuracy Over Evaluation Order", "Evaluation Index", "Accuracy (%)")
         ax.legend()
         _save(fig, os.path.join(out_dir, "generation_accuracy.png"), saved_files)
 
@@ -212,8 +207,8 @@ def plot_population_diversity(records, out_dir, saved_files):
         _warn("No accuracy values found — skipping population_diversity.png")
         return
 
-    # Group into batches of ~10 to simulate generation-level diversity
-    batch_size = 10
+    # Group into batches to simulate generation-level diversity
+    batch_size = int(os.environ.get("POPULATION_SIZE", 20))
     batches, labels = [], []
     for i in range(0, len(accs), batch_size):
         chunk = accs[i:i + batch_size]
@@ -249,7 +244,7 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
         _warn("No accuracy values — skipping best_vs_avg_accuracy.png")
         return
 
-    batch_size = 10
+    batch_size = int(os.environ.get("POPULATION_SIZE", 20))
     avg_per_batch, best_per_batch, gen_labels = [], [], []
     for i in range(0, max(len(accs), len(bests)), batch_size):
         chunk_acc  = accs[i:i + batch_size]
@@ -364,6 +359,43 @@ def plot_score_improvement(entries, out_dir, saved_files):
         _save(fig, os.path.join(out_dir, "score_improvement.png"), saved_files)
 
 
+def plot_peak_accuracy_over_iterations(entries, out_dir, saved_files):
+    if not entries:
+        _warn("No LLM log entries — skipping meta_peak_accuracy.png")
+        return
+    accs = [e.get("peak_accuracy", 0.0) for e in entries]
+    xs = list(range(1, len(accs) + 1))
+    with plt.rc_context(PLOT_STYLE):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(xs, accs, color=ACCENT1, linewidth=2.5, marker="o", markersize=5, label="Peak Accuracy")
+        ax.fill_between(xs, accs, alpha=0.15, color=ACCENT1)
+        _apply_style(ax, "Peak GA Accuracy Over Meta-Iterations", "Meta-Iteration", "Accuracy (%)")
+        ax.legend()
+        _save(fig, os.path.join(out_dir, "meta_peak_accuracy.png"), saved_files)
+
+
+def plot_modification_success_rate(entries, out_dir, saved_files):
+    if not entries:
+        _warn("No LLM log entries — skipping llm_success_rates.png")
+        return
+    syntax_valid = [1 if e.get("valid_syntax", False) else 0 for e in entries]
+    improved = [1 if e.get("reward", 0.0) > 0 else 0 for e in entries]
+    xs = list(range(1, len(syntax_valid) + 1))
+    window = min(10, max(2, len(entries) // 5))  # Dynamic window, capped
+    roll_syntax = [sum(syntax_valid[max(0, i-window+1):i+1]) / len(syntax_valid[max(0, i-window+1):i+1]) * 100 for i in range(len(syntax_valid))]
+    roll_improve = [sum(improved[max(0, i-window+1):i+1]) / len(improved[max(0, i-window+1):i+1]) * 100 for i in range(len(improved))]
+
+    with plt.rc_context(PLOT_STYLE):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(xs, roll_syntax, color=ACCENT1, linewidth=2, label=f"Syntax Success (rolling)")
+        ax.plot(xs, roll_improve, color=ACCENT3, linewidth=2, linestyle="--", label=f"Improvement Success (rolling)")
+        ax.axhline(50, color="#ffffff", linestyle=":", linewidth=1, alpha=0.3)
+        ax.set_ylim(-5, 105)
+        _apply_style(ax, "LLM Modification Success Rates", "Meta-Iteration", "Success Rate (%)")
+        ax.legend()
+        _save(fig, os.path.join(out_dir, "llm_success_rates.png"), saved_files)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -401,8 +433,10 @@ def main():
 
     print("  Generating fine-tuning plots …")
     plot_reward_over_iterations(entries, ft_dir, saved_files)
-    plot_syntax_success_rate(entries,   ft_dir, saved_files)
+    # plot_syntax_success_rate(entries,   ft_dir, saved_files)  # Replaced by plot_modification_success_rate
     plot_score_improvement(entries,     ft_dir, saved_files)
+    plot_peak_accuracy_over_iterations(entries, ft_dir, saved_files)
+    plot_modification_success_rate(entries, ft_dir, saved_files)
 
     # ── Summary ─────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")

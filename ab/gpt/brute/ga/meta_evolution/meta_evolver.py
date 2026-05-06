@@ -17,16 +17,64 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TARGET_FILE = os.path.join(BASE_DIR, "genetic_algorithm.py")
 RUNNER_SCRIPT = os.path.join(BASE_DIR, "run_fractal_evolution.py")
 BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup")
-LOG_FILE = os.path.join(BASE_DIR, "LLM-evolution-logs.jsonl")
+RUN_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_{RUN_TIMESTAMP}.jsonl")
+GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_{RUN_TIMESTAMP}.jsonl")
 ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter")
 
 # KEEP BENCHMARKS SMALL FOR FAST FEEDBACK, BUT CONFIGURABLE VIA ENV
 BENCH_GENS = int(os.environ.get("GENERATIONS", 3))
 BENCH_POP = int(os.environ.get("POPULATION_SIZE", 10)) 
 
+# --- PER-FUNCTION CONTEXT (prevents prompt contamination on smaller models) ---
+# # Shared cheat sheet (commented out — replaced by per-function context below):
+# CONTEXT_CHEAT_SHEET = """
+# CONTEXT CHEAT SHEET:
+# - A `chromosome` is a dict containing hyperparameters and architecture details.
+# - `self.search_space` is a dict of lists containing valid choices.
+# - You have access to the `random` module and `numpy` as `np`.
+# - `competitors` is a list of dicts, each with 'chromosome' (dict) and 'fitness' (float or None) keys.
+# - Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
+# """
+
+CONTEXT_MUTATE = """
+CONTEXT:
+- `current_value`: the current gene value to mutate away from.
+- `possible_values`: a list of valid replacement values.
+- You have access to `random` and `numpy` as `np`.
+- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
+"""
+
+CONTEXT_COMBINE = """
+CONTEXT:
+- `gene_name` (str): name of the gene being crossed over.
+- `parent1_value`, `parent2_value`: the two parent gene values.
+- `crossover_point` (int), `gene_index` (int), `total_genes` (int): position info.
+- All genes come from `self.search_space` and must remain valid downstream architecture values.
+- For discrete numeric genes such as channel counts or block counts, do NOT invent blended float values.
+- Return a value that is already present in the parents or is otherwise a valid member of the search space.
+- You have access to `random` and `numpy` as `np`.
+- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
+"""
+
+CONTEXT_SELECT = """
+CONTEXT:
+- `competitors`: a list of dicts, each with 'chromosome' (dict) and 'fitness' (float or None) keys.
+- You have access to `random` and `numpy` as `np`.
+- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
+"""
+
 # --- MICRO-MUTATION PROMPTS ---
+# # Previous PROMPTS with shared CONTEXT_CHEAT_SHEET (commented out):
+# PROMPTS = {
+#     "mutate_gene": CONTEXT_CHEAT_SHEET + """...""",
+#     "combine_genes": CONTEXT_CHEAT_SHEET + """...""",
+#     "select_competitor": CONTEXT_CHEAT_SHEET + """...""",
+# }
 PROMPTS = {
-    "mutate_gene": """
+    "mutate_gene": CONTEXT_MUTATE + """
 Improve this mutation helper function for a genetic algorithm.
 Goal: Select a new gene value to encourage exploration but respect valid choices.
 
@@ -35,10 +83,10 @@ Existing Code:
 
 Output ONLY the python code starting with 'def mutate_gene(self, current_value, possible_values):'
 """,
-    "combine_genes": """
+    "combine_genes": CONTEXT_COMBINE + """
 Improve this crossover helper function for a genetic algorithm.
 Goal: Decide which parent's gene value to use when creating a child chromosome.
-You may use blending, uniform crossover, or any creative strategy.
+Use only strategies that preserve valid search-space values.
 Parameters: gene_name (str), parent1_value, parent2_value, crossover_point (int), gene_index (int), total_genes (int).
 
 Existing Code:
@@ -46,7 +94,7 @@ Existing Code:
 
 Output ONLY the python code starting with 'def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):'
 """,
-    "select_competitor": """
+    "select_competitor": CONTEXT_SELECT + """
 Improve this selection helper function for a genetic algorithm.
 Goal: Pick the best individual from a list of tournament competitors.
 Each competitor is a dict with 'chromosome' and 'fitness' keys.
@@ -68,14 +116,19 @@ class MetaEvolver:
         # self.baseline_score = self.run_benchmark()
         # print(f"[Meta] Baseline Score: {self.baseline_score:.4f}")
         self.baseline_score = 0.0
+        
+        # --- Experience Replay Buffer ---
+        self.success_buffer = []
 
     def run_benchmark(self):
         cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP), "--clean"]
+        env = os.environ.copy()
+        env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
         try:
             # Increased timeout to 6 hours for large generations
             # Real-Time Logging with Popen
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
             
             full_output = ""
             for line in process.stdout:
@@ -84,15 +137,26 @@ class MetaEvolver:
                 
             process.wait(timeout=21600)
             
-            match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
-            if match:
-                return float(match.group(1))
-            else:
+            # match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
+            # if match:
+            #     return float(match.group(1))
+            # else:
+            #     print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
+            #     return 0.0
+            
+            score_match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
+            score = float(score_match.group(1)) if score_match else 0.0
+            
+            peak_match = re.search(r"PEAK_ACCURACY:\s*([\d\.]+)", full_output)
+            peak_acc = float(peak_match.group(1)) if peak_match else 0.0
+            
+            if not score_match:
                 print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
-                return 0.0
+            
+            return {"score": score, "peak_accuracy": peak_acc}
         except Exception as e: 
              print(f"[Meta] Benchmark Exception: {e}")
-             return 0.0
+             return {"score": 0.0, "peak_accuracy": 0.0}
 
     def _extract_method(self, source_code, method_name):
         try:
@@ -224,7 +288,9 @@ class MetaEvolver:
         except SyntaxError as e:
             print(f"[Meta] Syntax Error: {e}")
 
-        new_score = 0.0
+        # new_score = 0.0
+        bench_stats = {"score": 0.0, "peak_accuracy": 0.0}
+        
         if valid_syntax:
             target_filename = os.path.basename(TARGET_FILE)
             bkp = os.path.join(BACKUP_DIR, f"{target_filename}_{method_name}.bak")
@@ -232,7 +298,9 @@ class MetaEvolver:
             with open(TARGET_FILE, 'w') as f: f.write(test_full)
             
             print("[Meta] Benchmarking...")
-            new_score = self.run_benchmark()
+            bench_stats = self.run_benchmark()
+
+        new_score = bench_stats["score"]
 
         # RL Loop
         reward = calculate_meta_reward(new_score, self.baseline_score, valid_syntax)
@@ -258,11 +326,21 @@ class MetaEvolver:
             print("--> SUCCESS. Updating Baseline & Fine-tuning.")
             self.baseline_score = new_score
             
-            print("[LoRA] Fine-tune start")
+            # --- Experience Replay: append success and sample a batch ---
+            self.success_buffer.append({'prompt': prompt, 'completion': new_code})
+            if len(self.success_buffer) > 20:
+                self.success_buffer.pop(0)  # Cap buffer at 20, drop oldest
+            
+            batch_size = min(4, len(self.success_buffer))
+            training_batch = random.sample(self.success_buffer, batch_size)
+            train_examples_count = batch_size
+            
+            print(f"[LoRA] Fine-tune start (replay buffer: {len(self.success_buffer)} items, batch: {batch_size})")
             fine_tune_started = True
             fine_tune_start_time = datetime.now().isoformat()
             try:
-                self.llm.train_on_buffer([{'prompt': prompt, 'completion': new_code}], epochs=train_epochs)
+                # self.llm.train_on_buffer([{'prompt': prompt, 'completion': new_code}], epochs=train_epochs)
+                self.llm.train_on_buffer(training_batch, epochs=train_epochs)
                 fine_tune_completed = True
                 print("[LoRA] Fine-tune complete")
             except Exception as e:
@@ -299,6 +377,7 @@ class MetaEvolver:
             "cleaned_code": new_code,
             "valid_syntax": valid_syntax,
             "score": new_score,
+            "peak_accuracy": bench_stats["peak_accuracy"],
             "reward": reward,
             "fine_tune_expected": fine_tune_expected,
             "fine_tune_started": fine_tune_started,
@@ -332,3 +411,11 @@ if __name__ == "__main__":
         print(f"\n=== Meta-Evolution Iteration {i+1}/{META_ITERATIONS} — Evolving: {component} ===")
         evolver.evolve_component(component) 
         time.sleep(2)
+    
+    # --- Generate visualizations after all iterations ---
+    try:
+        from ab.gpt.brute.ga.meta_evolution.visualize_training import main as generate_plots
+        print("\n=== Generating Visualizations ===")
+        generate_plots()
+    except Exception as e:
+        print(f"[WARN] Visualization failed (non-fatal): {e}")
