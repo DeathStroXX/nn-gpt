@@ -24,6 +24,7 @@ import os
 import json
 import warnings
 import glob
+import re
 from datetime import datetime
 
 import matplotlib
@@ -80,6 +81,34 @@ def _save(fig, path, saved_files):
 
 def _warn(msg):
     print(f"  [WARN]  {msg}")
+
+def _extract_log_timestamp():
+    """
+    Extract the experiment timestamp from source log filenames.
+    Priority: ga_evaluations > LLM-evolution-logs > pod log > fallback to now().
+    """
+    ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
+    
+    # Priority order of log file patterns to check
+    search_patterns = [
+        os.path.join(LOGS_DIR, "ga_evaluations_*.jsonl"),
+        os.path.join(LOGS_DIR, "LLM-evolution-logs_*.jsonl"),
+        os.path.join(LOGS_DIR, "pod_*.log"),
+        # Fallback to base dir for older logs
+        os.path.join(BASE_DIR, "ga_evaluations_*.jsonl"),
+        os.path.join(BASE_DIR, "LLM-evolution-logs_*.jsonl"),
+    ]
+    
+    for pattern in search_patterns:
+        files = glob.glob(pattern)
+        if files:
+            latest = max(files, key=os.path.getmtime)
+            match = ts_pattern.search(os.path.basename(latest))
+            if match:
+                return match.group(1)
+    
+    # Final fallback: current wall-clock time
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +430,9 @@ def plot_modification_success_rate(entries, out_dir, saved_files):
 # ---------------------------------------------------------------------------
 
 def main():
-    timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # Use source log timestamp so visualizations correlate with their experiment
+    timestamp  = _extract_log_timestamp()
     run_dir    = os.path.join(VIZ_ROOT, f"run_{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")

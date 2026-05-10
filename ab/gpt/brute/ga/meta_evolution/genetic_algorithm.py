@@ -66,9 +66,12 @@ class GeneticAlgorithm:
         """
         if parent1_value == parent2_value:
             return parent1_value
-        if gene_index < crossover_point:
-            return parent1_value
-        return random.choice([parent1_value, parent2_value])
+        if gene_name in ['lr', 'momentum']:
+            return parent1_value if parent1_value > parent2_value else parent2_value
+        elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'nn_blocks']:
+            return random.choice([parent1_value, parent2_value])
+        else:
+            return parent1_value if gene_index < crossover_point else parent2_value
 
     def _crossover(self, parent1_chromo, parent2_chromo):
         child_chromo = {}
@@ -91,10 +94,7 @@ class GeneticAlgorithm:
         if not possible_values:
             return current_value
         import random
-        new_value = random.choice(possible_values)
-        while new_value == current_value and len(possible_values) > 1:
-            new_value = random.choice(possible_values)
-        return new_value
+        new_value = random
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
         for gene in self.search_space.keys():
@@ -115,7 +115,9 @@ class GeneticAlgorithm:
         Each competitor is a dict with 'chromosome' and 'fitness' keys.
         Returns the winning individual.
         """
-        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -np.inf)
+        total_fitness = sum((x['fitness'] if x['fitness'] is not None else 0 for x in competitors))
+        probabilities = [(x['fitness'] if x['fitness'] is not None else 0) / total_fitness for x in competitors]
+        return random.choices(competitors, probabilities)[0]
 
     def _selection(self):
         k = 3

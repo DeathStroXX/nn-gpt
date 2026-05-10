@@ -49,7 +49,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # This is the folder where unique fractal models will be saved
 ARCH_DIR = os.path.join(BASE_DIR, 'ga_fractal_arch') 
 STATS_DIR = os.path.join(BASE_DIR, 'stats')
-CHECKPOINT = 'fractal_ga_ckpt.pkl'
+# CHECKPOINT = 'fractal_ga_ckpt.pkl'
+CHECKPOINT = os.path.join(BASE_DIR, 'fractal_ga_ckpt.pkl')
 BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_stats')
 
 os.makedirs(ARCH_DIR, exist_ok=True)

@@ -3,13 +3,13 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.001
+# LR: 0.005
 # Momentum: 0.75
-# Activation: SiLU
+# Activation: GELU
 # Kernel: 5
-# Pooling: Max
+# Pooling: Avg
 # Conv Type: Depthwise
-# Norm Type: BatchNorm
+# Norm Type: InstanceNorm
 # Optimizer: AdamW
 # FC Dropout: 0.0
 
@@ -39,30 +39,12 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        # 1. Dynamic Activations
-        if "SiLU" == "GELU":
-            activation_layer = nn.GELU()
-        elif "SiLU" == "LeakyReLU":
-            activation_layer = nn.LeakyReLU(inplace=True)
-        elif "SiLU" == "SiLU":
-            activation_layer = nn.SiLU(inplace=True)
-        else:
-            activation_layer = nn.ReLU(inplace=True)
-
-        # 2. Dynamic Convolution Strategy
-        if "Depthwise" == "Depthwise":
-            conv_layer = nn.Sequential(
-                nn.Conv2d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False),
-                nn.Conv2d(channels, channels, kernel_size=1, bias=False)
-            )
-        else:
-            conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
-
-        # 3. Dynamic Normalization Strategy
-        if "BatchNorm" == "InstanceNorm":
-            norm_layer = nn.InstanceNorm2d(channels, affine=True)
-        else:
-            norm_layer = nn.BatchNorm2d(channels)
+        activation_layer = nn.GELU()
+        conv_layer = nn.Sequential(
+    nn.Conv2d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False),
+    nn.Conv2d(channels, channels, kernel_size=1, bias=False)
+)
+        norm_layer = nn.InstanceNorm2d(channels, affine=True)
 
         # Assemble Convolutional Sequence
         self.conv = nn.Sequential(
@@ -99,19 +81,15 @@ class Net(nn.Module):
             nn.ReLU(inplace=True)
         )
 
-        blocks =[]
-        pools =[]
+        blocks = []
+        pools = []
         trans_layers =[]
         cur_chan = start_chan
         total_blocks = int(3)
 
         for i in range(total_blocks):
             blocks.append(FractalBlock(int(2), cur_chan, 0.0))
-
-            if "Max" == "Avg":
-                pools.append(nn.AvgPool2d(2))
-            else:
-                pools.append(nn.MaxPool2d(2))
+            pools.append(nn.AvgPool2d(2))
 
             if i < total_blocks - 1:
                 next_chan = int(cur_chan * 2) 
@@ -154,15 +132,7 @@ class Net(nn.Module):
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss()
-
-        # Dynamic Optimizer Selection
-        if "AdamW" == "AdamW":
-            self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], weight_decay=1e-4)
-        elif "AdamW" == "RMSprop":
-            self.optimizer = torch.optim.RMSprop(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
-        else:
-            self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
-
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], betas=(prm['momentum'], 0.999), weight_decay=1e-4)
         self.max_batches = prm.get('max_batches', None)
         return self.optimizer
 

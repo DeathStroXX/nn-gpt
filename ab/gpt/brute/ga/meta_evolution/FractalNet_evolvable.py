@@ -7,7 +7,7 @@ import textwrap
 SEARCH_SPACE = {
     'n_columns': [2, 3],               
     'base_channels': [16, 32, 64], 
-    'dropout_prob': [0.0, 0.1, 0.2, 0.3],
+    'dropout_prob':[0.0, 0.1, 0.2, 0.3],
     'lr':[0.01, 0.005, 0.003, 0.002, 0.001],
     'momentum':[0.75, 0.8, 0.85, 0.9, 0.92, 0.95],
     'n_blocks': [2, 3],                
@@ -51,7 +51,51 @@ def generate_model_code_string(chromosome: dict) -> str:
     # Calculate padding to keep spatial dimensions identical
     pad_size = k_size // 2 
 
-    # 2. PyTorch String Generation
+    # =====================================================================
+    # PRE-CALCULATE ALL STRINGS FOR "SINGLE STREAM" CODE GENERATION
+    # =====================================================================
+    
+    # 1. Activation Layer String
+    if act_func == "GELU":
+        act_layer_str = "nn.GELU()"
+    elif act_func == "LeakyReLU":
+        act_layer_str = "nn.LeakyReLU(inplace=True)"
+    elif act_func == "SiLU":
+        act_layer_str = "nn.SiLU(inplace=True)"
+    else:
+        act_layer_str = "nn.ReLU(inplace=True)"
+
+    # 2. Convolution Layer String
+    if conv_type == "Depthwise":
+        conv_layer_str = f"nn.Sequential(\n            nn.Conv2d(channels, channels, kernel_size={k_size}, padding={pad_size}, groups=channels, bias=False),\n            nn.Conv2d(channels, channels, kernel_size=1, bias=False)\n        )"
+    else:
+        conv_layer_str = f"nn.Conv2d(channels, channels, kernel_size={k_size}, padding={pad_size}, bias=False)"
+
+    # 3. Normalization Layer String
+    if norm_type == "InstanceNorm":
+        norm_layer_str = "nn.InstanceNorm2d(channels, affine=True)"
+    else:
+        norm_layer_str = "nn.BatchNorm2d(channels)"
+
+    # 4. Pooling Layer String
+    if pool_type == "Avg":
+        pool_str = "nn.AvgPool2d(2)"
+    else:
+        pool_str = "nn.MaxPool2d(2)"
+
+    # 5. Optimizer Setup String
+    if opt_type == "AdamW":
+        # opt_str = "torch.optim.AdamW(self.parameters(), lr=prm['lr'], weight_decay=1e-4)"
+        # FIX: Map momentum gene to Adam's beta1 (which functions as momentum) so prm['momentum'] is always accessed
+        opt_str = "torch.optim.AdamW(self.parameters(), lr=prm['lr'], betas=(prm['momentum'], 0.999), weight_decay=1e-4)"
+    elif opt_type == "RMSprop":
+        opt_str = "torch.optim.RMSprop(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])"
+    else:
+        opt_str = "torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])"
+
+    # =====================================================================
+
+    # 2. PyTorch String Generation (Now perfectly clean, single-stream code)
     code = textwrap.dedent(f"""
         import torch
         import torch.nn as nn
@@ -94,30 +138,9 @@ def generate_model_code_string(chromosome: dict) -> str:
                 self.n_columns = int(n_columns)
                 channels = int(channels)  
                 
-                # 1. Dynamic Activations
-                if "{act_func}" == "GELU":
-                    activation_layer = nn.GELU()
-                elif "{act_func}" == "LeakyReLU":
-                    activation_layer = nn.LeakyReLU(inplace=True)
-                elif "{act_func}" == "SiLU":
-                    activation_layer = nn.SiLU(inplace=True)
-                else:
-                    activation_layer = nn.ReLU(inplace=True)
-
-                # 2. Dynamic Convolution Strategy
-                if "{conv_type}" == "Depthwise":
-                    conv_layer = nn.Sequential(
-                        nn.Conv2d(channels, channels, kernel_size={k_size}, padding={pad_size}, groups=channels, bias=False),
-                        nn.Conv2d(channels, channels, kernel_size=1, bias=False)
-                    )
-                else:
-                    conv_layer = nn.Conv2d(channels, channels, kernel_size={k_size}, padding={pad_size}, bias=False)
-
-                # 3. Dynamic Normalization Strategy
-                if "{norm_type}" == "InstanceNorm":
-                    norm_layer = nn.InstanceNorm2d(channels, affine=True)
-                else:
-                    norm_layer = nn.BatchNorm2d(channels)
+                activation_layer = {act_layer_str}
+                conv_layer = {conv_layer_str}
+                norm_layer = {norm_layer_str}
 
                 # Assemble Convolutional Sequence
                 self.conv = nn.Sequential(
@@ -154,19 +177,15 @@ def generate_model_code_string(chromosome: dict) -> str:
                     nn.ReLU(inplace=True)
                 )
 
-                blocks =[]
-                pools =[]
+                blocks = []
+                pools = []
                 trans_layers =[]
                 cur_chan = start_chan
                 total_blocks = int({n_blocks})
                 
                 for i in range(total_blocks):
                     blocks.append(FractalBlock(int({cols}), cur_chan, {drop}))
-                    
-                    if "{pool_type}" == "Avg":
-                        pools.append(nn.AvgPool2d(2))
-                    else:
-                        pools.append(nn.MaxPool2d(2))
+                    pools.append({pool_str})
                     
                     if i < total_blocks - 1:
                         next_chan = int(cur_chan * 2) 
@@ -209,15 +228,7 @@ def generate_model_code_string(chromosome: dict) -> str:
 
             def train_setup(self, prm):
                 self.criterion = nn.CrossEntropyLoss()
-                
-                # Dynamic Optimizer Selection
-                if "{opt_type}" == "AdamW":
-                    self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], weight_decay=1e-4)
-                elif "{opt_type}" == "RMSprop":
-                    self.optimizer = torch.optim.RMSprop(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
-                else:
-                    self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
-
+                self.optimizer = {opt_str}
                 self.max_batches = prm.get('max_batches', None)
                 return self.optimizer
 

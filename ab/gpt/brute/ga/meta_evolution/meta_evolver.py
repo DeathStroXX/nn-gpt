@@ -12,6 +12,7 @@ from datetime import datetime
 
 from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader 
 from ab.gpt.brute.ga.meta_evolution.rl_rewards import calculate_meta_reward
+from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable import SEARCH_SPACE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TARGET_FILE = os.path.join(BASE_DIR, "genetic_algorithm.py")
@@ -28,82 +29,60 @@ ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter")
 BENCH_GENS = int(os.environ.get("GENERATIONS", 3))
 BENCH_POP = int(os.environ.get("POPULATION_SIZE", 10)) 
 
-# --- PER-FUNCTION CONTEXT (prevents prompt contamination on smaller models) ---
-# # Shared cheat sheet (commented out — replaced by per-function context below):
-# CONTEXT_CHEAT_SHEET = """
-# CONTEXT CHEAT SHEET:
-# - A `chromosome` is a dict containing hyperparameters and architecture details.
-# - `self.search_space` is a dict of lists containing valid choices.
-# - You have access to the `random` module and `numpy` as `np`.
-# - `competitors` is a list of dicts, each with 'chromosome' (dict) and 'fitness' (float or None) keys.
-# - Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
-# """
+# --- FULL CONTEXT PROMPT TEMPLATE ---
+# Format the search space so the LLM understands the exact gene constraints
+SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 
-CONTEXT_MUTATE = """
-CONTEXT:
+BASE_PROMPT_TEMPLATE = """
+You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-10.
+
+=== SEARCH SPACE ===
+The GA optimizes the following SEARCH_SPACE:
+{search_space}
+
+=== GA SCRIPT CONTEXT (READ-ONLY) ===
+Below is the FULL CODE of the current Genetic Algorithm. 
+Study it to understand the class variables (`self.population`, `self.search_space`, etc.) and helper methods (`self._coerce_gene_value`, etc.).
+DO NOT rewrite this script. It is strictly for context.
+
+<full_script>
+{full_code}
+</full_script>
+
+=== YOUR SPECIFIC TASK ===
+You must intelligently improve ONLY the following specific function: `{method_name}`.
+{task_specific_instructions}
+
+Current implementation:
+<current_function>
+{code}
+</current_function>
+
+=== STRICT OUTPUT FORMAT ===
+1. Output ONLY the python code for the improved `{method_name}` function.
+2. DO NOT output the rest of the `GeneticAlgorithm` class.
+3. DO NOT include example usage, test code, or markdown explanations.
+4. Your output MUST start exactly with `def {method_name}(self, ...):` and contain the correct indentation.
+"""
+
+INSTRUCTIONS = {
+    "mutate_gene": """
+Task: Improve the `mutate_gene` helper.
 - `current_value`: the current gene value to mutate away from.
 - `possible_values`: a list of valid replacement values.
-- You have access to `random` and `numpy` as `np`.
-- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
-"""
-
-CONTEXT_COMBINE = """
-CONTEXT:
+- Strategy: Consider implementing logic to handle numeric parameters (like `lr`, `dropout_prob`) with small random walks, while treating categorical parameters (like `activation`) with random choice.
+""",
+    "combine_genes": """
+Task: Improve the `combine_genes` crossover helper.
 - `gene_name` (str): name of the gene being crossed over.
 - `parent1_value`, `parent2_value`: the two parent gene values.
-- `crossover_point` (int), `gene_index` (int), `total_genes` (int): position info.
-- All genes come from `self.search_space` and must remain valid downstream architecture values.
-- For discrete numeric genes such as channel counts or block counts, do NOT invent blended float values.
-- Return a value that is already present in the parents or is otherwise a valid member of the search space.
-- You have access to `random` and `numpy` as `np`.
-- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
-"""
-
-CONTEXT_SELECT = """
-CONTEXT:
+- `crossover_point`, `gene_index`, `total_genes`: position info.
+- Strategy: Look at the gene name. DO NOT invent blended float values (e.g., averaging) because the output MUST exist in `self.search_space[gene_name]`. You can use random chance or distance-based logic.
+""",
+    "select_competitor": """
+Task: Improve the `select_competitor` tournament selection helper.
 - `competitors`: a list of dicts, each with 'chromosome' (dict) and 'fitness' (float or None) keys.
-- You have access to `random` and `numpy` as `np`.
-- Return ONLY the improved function. Do NOT include test code, explanations, or markdown.
-"""
-
-# --- MICRO-MUTATION PROMPTS ---
-# # Previous PROMPTS with shared CONTEXT_CHEAT_SHEET (commented out):
-# PROMPTS = {
-#     "mutate_gene": CONTEXT_CHEAT_SHEET + """...""",
-#     "combine_genes": CONTEXT_CHEAT_SHEET + """...""",
-#     "select_competitor": CONTEXT_CHEAT_SHEET + """...""",
-# }
-PROMPTS = {
-    "mutate_gene": CONTEXT_MUTATE + """
-Improve this mutation helper function for a genetic algorithm.
-Goal: Select a new gene value to encourage exploration but respect valid choices.
-
-Existing Code:
-{code}
-
-Output ONLY the python code starting with 'def mutate_gene(self, current_value, possible_values):'
-""",
-    "combine_genes": CONTEXT_COMBINE + """
-Improve this crossover helper function for a genetic algorithm.
-Goal: Decide which parent's gene value to use when creating a child chromosome.
-Use only strategies that preserve valid search-space values.
-Parameters: gene_name (str), parent1_value, parent2_value, crossover_point (int), gene_index (int), total_genes (int).
-
-Existing Code:
-{code}
-
-Output ONLY the python code starting with 'def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):'
-""",
-    "select_competitor": CONTEXT_SELECT + """
-Improve this selection helper function for a genetic algorithm.
-Goal: Pick the best individual from a list of tournament competitors.
-Each competitor is a dict with 'chromosome' and 'fitness' keys.
-You may add fitness-proportional selection, diversity bonuses, or other strategies.
-
-Existing Code:
-{code}
-
-Output ONLY the python code starting with 'def select_competitor(self, competitors):'
+- Strategy: Pick the best individual from the competitors. Consider advanced strategies like fitness-proportional selection, diversity bonuses, or probabilistic tournament selection to prevent premature convergence.
 """
 }
 
@@ -241,9 +220,15 @@ class MetaEvolver:
 
         print(f"--- [DEBUG] Input Code ---\n{orig_code}\n-------------------------")
 
-        # LLM Generation
-        prompt = PROMPTS[method_name].format(code=orig_code)
-        raw_res = self.llm.generate(prompt, max_new_tokens=500)
+        # LLM Generation with Full Context
+        prompt = BASE_PROMPT_TEMPLATE.format(
+            search_space=SEARCH_SPACE_STR,
+            full_code=full_code,
+            method_name=method_name,
+            task_specific_instructions=INSTRUCTIONS[method_name],
+            code=orig_code
+        )
+        raw_res = self.llm.generate(prompt, max_new_tokens=800)
         
         print(f"--- [DEBUG] Raw Response ---\n{raw_res}\n--------------------------")
         
