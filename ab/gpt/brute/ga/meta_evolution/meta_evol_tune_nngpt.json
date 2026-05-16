@@ -28,7 +28,7 @@
               },
               {
                 "name": "GENERATIONS",
-                "value": "5"
+                "value": "10"
               },
               {
                 "name": "MUTATION_RATE",
@@ -36,7 +36,7 @@
               },
               {
                 "name": "META_ATTEMPTS",
-                "value": "5"
+                "value": "8"
               }
             ],
             "securityContext": {

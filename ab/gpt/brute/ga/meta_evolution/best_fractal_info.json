@@ -1,23 +1,23 @@
 {
-    "timestamp": "2026-05-09T21:07:30.676154",
-    "checksum": "f61155c839543aa1c15e3f0db6de4c22",
-    "fitness": 58.940000000000005,
+    "timestamp": "2026-05-16T18:40:21.368719",
+    "checksum": "9d411d00438e4cac9d7bd368d0e9a6ac",
+    "fitness": 65.56,
     "chromosome": {
         "n_columns": 2,
         "base_channels": 64,
         "dropout_prob": 0.0,
-        "lr": 0.005,
-        "momentum": 0.75,
+        "lr": 0.01,
+        "momentum": 0.85,
         "n_blocks": 3,
-        "activation": "GELU",
-        "kernel_size": 5,
-        "pooling_type": "Avg",
-        "conv_type": "Depthwise",
-        "norm_type": "InstanceNorm",
+        "activation": "ReLU",
+        "kernel_size": 3,
+        "pooling_type": "Max",
+        "conv_type": "Standard",
+        "norm_type": "BatchNorm",
         "optimizer_type": "AdamW",
         "fc_dropout": 0.0,
-        "accuracy": 58.940000000000005
+        "accuracy": 65.56
     },
-    "source_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/stats/img-classification_cifar-10_GenFractalNet-f61155c839543aa1c15e3f0db6de4c22",
-    "copied_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/best_fractal_stats/img-classification_cifar-10_GenFractalNet-f61155c839543aa1c15e3f0db6de4c22"
+    "source_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/stats/img-classification_cifar-10_GenFractalNet-9d411d00438e4cac9d7bd368d0e9a6ac",
+    "copied_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/best_fractal_stats/img-classification_cifar-10_GenFractalNet-9d411d00438e4cac9d7bd368d0e9a6ac"
 }

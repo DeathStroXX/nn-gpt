@@ -94,7 +94,13 @@ class GeneticAlgorithm:
         if not possible_values:
             return current_value
         import random
-        new_value = random
+        new_value = random.choice(possible_values)
+        if isinstance(current_value, (int, float, np.integer, np.floating)):
+            if new_value == current_value:
+                new_value += random.choice([-1, 1])
+            else:
+                new_value += random.choice([-0.1, 0.1])
+        return new_value
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
         for gene in self.search_space.keys():
@@ -110,14 +116,9 @@ class GeneticAlgorithm:
 
     # --- START LLM: SELECTION ---
     def select_competitor(self, competitors):
-        """
-        Pick the best individual from a list of competitors.
-        Each competitor is a dict with 'chromosome' and 'fitness' keys.
-        Returns the winning individual.
-        """
         total_fitness = sum((x['fitness'] if x['fitness'] is not None else 0 for x in competitors))
         probabilities = [(x['fitness'] if x['fitness'] is not None else 0) / total_fitness for x in competitors]
-        return random.choices(competitors, probabilities)[0]
+        return random.choices(competitors, probabilities, k=1)[0]
 
     def _selection(self):
         k = 3

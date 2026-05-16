@@ -405,10 +405,22 @@ def fitness_function(chromosome: dict) -> float:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gens", type=int, default=3)
-    parser.add_argument("--pop", type=int, default=10)
+    # parser.add_argument("--gens", type=int, default=3)
+    # parser.add_argument("--pop", type=int, default=10)
+    parser.add_argument("--gens", type=int, default=int(os.environ.get("GENERATIONS", 3)))
+    parser.add_argument("--pop", type=int, default=int(os.environ.get("POPULATION_SIZE", 10)))
     parser.add_argument("--clean", action="store_true")
     args = parser.parse_args()
+
+    # Auto-setup timestamped GA eval log if not already set by meta_evolver
+    _standalone_mode = False
+    if not os.environ.get("GA_EVAL_LOG"):
+        _standalone_mode = True
+        run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        logs_dir = os.path.join(BASE_DIR, "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_{run_ts}.jsonl")
+        print(f"[LOG] GA eval log: {os.environ['GA_EVAL_LOG']}")
 
     if args.clean and os.path.exists(CHECKPOINT):
         os.remove(CHECKPOINT)
@@ -471,11 +483,13 @@ if __name__ == "__main__":
                  json.dump(best_info, f, indent=4, cls=NumpyEncoder)
              print(f"[Best] Saved best info metadata to {info_path}")
 
-        # Meta-Score Calculation
+        # ROBUST META-SCORE CALCULATION
         if history:
-            avg_imp = (history[-1] - history[0]) if len(history) > 1 else 0
             peak = max(history)
-            meta_score = peak + (avg_imp * 1.5) 
+            # Average accuracy across all generations (rewards fast convergence, penalizes deep holes)
+            avg_acc = sum(history) / len(history) 
+            # 60% weight to peak performance, 40% weight to maintaining high accuracy
+            meta_score = (peak * 0.6) + (avg_acc * 0.4)
         else:
             meta_score = 0.0
             peak = 0.0
@@ -489,3 +503,13 @@ if __name__ == "__main__":
         traceback.print_exc()
         print("PEAK_ACCURACY: 0.0")
         print("META_SCORE: 0.0")
+
+    # --- Generate visualizations only in standalone mode ---
+    # (meta_evolver.py handles its own visualization at the end)
+    if _standalone_mode:
+        try:
+            from ab.gpt.brute.ga.meta_evolution.visualize_training import main as generate_plots
+            print("\n=== Generating Visualizations ===")
+            generate_plots()
+        except Exception as e:
+            print(f"[WARN] Visualization failed (non-fatal): {e}")

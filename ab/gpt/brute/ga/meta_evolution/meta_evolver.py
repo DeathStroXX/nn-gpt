@@ -66,11 +66,23 @@ Current implementation:
 """
 
 INSTRUCTIONS = {
+    # "mutate_gene": """
+    # Task: Improve the `mutate_gene` helper.
+    # - `current_value`: the current gene value to mutate away from.
+    # - `possible_values`: a list of valid replacement values.
+    # - Strategy: Consider implementing logic to handle numeric parameters (like `lr`, `dropout_prob`) with small random walks, while treating categorical parameters (like `activation`) with random choice.
+    # """,
     "mutate_gene": """
 Task: Improve the `mutate_gene` helper.
 - `current_value`: the current gene value to mutate away from.
-- `possible_values`: a list of valid replacement values.
-- Strategy: Consider implementing logic to handle numeric parameters (like `lr`, `dropout_prob`) with small random walks, while treating categorical parameters (like `activation`) with random choice.
+- `possible_values`: a list of valid replacement values from the search space.
+
+HARD CONSTRAINTS (violating any of these will crash the pipeline):
+1. You may ONLY use the two arguments: `current_value` and `possible_values`. Do NOT reference `self.search_space`, `possible_space`, or any variable not in the function signature.
+2. The return value MUST always be an element of `possible_values`. NEVER use arithmetic (e.g., `value += 0.1`, `value + random.choice([-1,1])`) to invent new values — genes are discrete.
+3. You may use `random`, `np`, and standard Python builtins. Do NOT import anything else.
+4. For numeric genes: prefer choosing the nearest neighbor in `possible_values` to `current_value` to simulate a random walk within the valid space.
+5. For categorical genes: use `random.choice(possible_values)`.
 """,
     "combine_genes": """
 Task: Improve the `combine_genes` crossover helper.
@@ -282,8 +294,38 @@ class MetaEvolver:
             shutil.copy(TARGET_FILE, bkp)
             with open(TARGET_FILE, 'w') as f: f.write(test_full)
             
-            print("[Meta] Benchmarking...")
-            bench_stats = self.run_benchmark()
+            # --- Runtime Smoke Test: catch NameError/TypeError before expensive benchmark ---
+            try:
+                import importlib
+                import ab.gpt.brute.ga.meta_evolution.genetic_algorithm as ga_mod
+                importlib.reload(ga_mod)
+                test_ga = ga_mod.GeneticAlgorithm(
+                    population_size=4, search_space=SEARCH_SPACE,
+                    elitism_count=1, mutation_rate=1.0,
+                    checkpoint_path="/dev/null"
+                )
+                # Create a test chromosome and exercise all LLM-editable functions
+                test_chromo = test_ga._create_random_chromosome()
+                test_chromo2 = test_ga._create_random_chromosome()
+                mutated = test_ga._mutate(test_chromo)
+                crossed = test_ga._crossover(test_chromo, test_chromo2)
+                # Validate mutated values are within search space
+                for gene, val in mutated.items():
+                    if val not in SEARCH_SPACE[gene]:
+                        raise ValueError(f"Smoke test: mutate produced '{val}' for gene '{gene}', not in search space {SEARCH_SPACE[gene]}")
+                for gene, val in crossed.items():
+                    if val not in SEARCH_SPACE[gene]:
+                        raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space {SEARCH_SPACE[gene]}")
+                print("[Meta] Runtime smoke test PASSED.")
+            except Exception as e:
+                print(f"[Meta] Runtime smoke test FAILED: {e}")
+                print("---> Reverting file and skipping benchmark.")
+                shutil.copy(bkp, TARGET_FILE)
+                valid_syntax = False
+            
+            if valid_syntax:
+                print("[Meta] Benchmarking...")
+                bench_stats = self.run_benchmark()
 
         new_score = bench_stats["score"]
 
@@ -308,8 +350,12 @@ class MetaEvolver:
         adapter_save_end_time = None
         
         if fine_tune_expected:
-            print("--> SUCCESS. Updating Baseline & Fine-tuning.")
-            self.baseline_score = new_score
+            print("--> SUCCESS. Updating Baseline (EMA) & Fine-tuning.")
+            # EMA Update: 20% of the new score, 80% of the old baseline
+            if self.baseline_score == 0.0:
+                self.baseline_score = new_score  # Initialize on first success
+            else:
+                self.baseline_score = (0.2 * new_score) + (0.8 * self.baseline_score)
             
             # --- Experience Replay: append success and sample a batch ---
             self.success_buffer.append({'prompt': prompt, 'completion': new_code})

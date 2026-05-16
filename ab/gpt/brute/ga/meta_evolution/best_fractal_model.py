@@ -3,13 +3,13 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.005
-# Momentum: 0.75
-# Activation: GELU
-# Kernel: 5
-# Pooling: Avg
-# Conv Type: Depthwise
-# Norm Type: InstanceNorm
+# LR: 0.01
+# Momentum: 0.85
+# Activation: ReLU
+# Kernel: 3
+# Pooling: Max
+# Conv Type: Standard
+# Norm Type: BatchNorm
 # Optimizer: AdamW
 # FC Dropout: 0.0
 
@@ -39,12 +39,9 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        activation_layer = nn.GELU()
-        conv_layer = nn.Sequential(
-    nn.Conv2d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False),
-    nn.Conv2d(channels, channels, kernel_size=1, bias=False)
-)
-        norm_layer = nn.InstanceNorm2d(channels, affine=True)
+        activation_layer = nn.ReLU(inplace=True)
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
         self.conv = nn.Sequential(
@@ -89,7 +86,7 @@ class Net(nn.Module):
 
         for i in range(total_blocks):
             blocks.append(FractalBlock(int(2), cur_chan, 0.0))
-            pools.append(nn.AvgPool2d(2))
+            pools.append(nn.MaxPool2d(2))
 
             if i < total_blocks - 1:
                 next_chan = int(cur_chan * 2) 
