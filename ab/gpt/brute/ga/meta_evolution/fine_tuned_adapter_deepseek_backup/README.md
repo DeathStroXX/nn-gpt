@@ -1,5 +1,5 @@
 ---
-base_model: Qwen/Qwen2.5-Coder-7B-Instruct
+base_model: deepseek-ai/deepseek-coder-6.7b-instruct
 library_name: peft
 ---
 

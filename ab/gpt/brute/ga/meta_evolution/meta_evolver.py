@@ -33,68 +33,81 @@ BENCH_POP = int(os.environ.get("POPULATION_SIZE", 10))
 # Format the search space so the LLM understands the exact gene constraints
 SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 
+# # [ORIGINAL BASE_PROMPT_TEMPLATE — commented out 2026-05-24]
+# BASE_PROMPT_TEMPLATE = """
+# You are an expert AI researcher fine-tuning a Genetic Algorithm (GA)...
+# === SEARCH SPACE === ... === STRICT OUTPUT FORMAT ===
+# 1. Output ONLY the python code...
+# """
+# # [END ORIGINAL]
+
 BASE_PROMPT_TEMPLATE = """
-You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-10.
+### ROLE & OBJECTIVE ###
+You are an elite AI Research Engineer and Evolutionary Computation Expert. 
+Your task is to rewrite the core evolutionary operators of a Genetic Algorithm (GA) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
+Your generated code will be AUTOMATICALLY INJECTED into a production Python class via string replacement. Any syntax error, hallucinated import, or invalid indentation will crash the entire pipeline.
+
+### HARD CONSTRAINTS (CRITICAL) ###
+1. NO INVENTED VALUES: Genes are strictly discrete. You MUST ONLY select values from the provided `SEARCH_SPACE` or the `possible_values` list. NEVER use arithmetic (e.g., `val + 0.1`, `val * 2`, `random.uniform()`) to create new gene values.
+2. NO IMPORTS: Do NOT write `import random` or `import numpy as np`. Assume `random`, `numpy as np`, and `copy` are already available in the global scope.
+3. EXACT SIGNATURES: You must use the EXACT method signatures provided. Do not add or remove arguments.
+4. CLASS INDENTATION: Your output will be injected directly into the `GeneticAlgorithm` class. All `def` statements MUST have exactly 4 spaces of indentation. Method bodies MUST have 8 spaces.
+5. SANITIZATION: Always pass newly created chromosomes through `self._sanitize_chromosome(child_chromo)` before returning them in `_crossover` and `_mutate`.
+
+### ANTI-PATTERNS (NEVER DO THIS) ###
+❌ BAD: `new_lr = current_value + 0.001` (Invents a value not in search space)
+✅ GOOD: `new_lr = min(possible_values, key=lambda x: abs(x - current_value))` (Snaps to nearest valid value)
+❌ BAD: `import random` inside the method (Causes IndentationError/SyntaxError upon injection)
+✅ GOOD: Just use `random.choice()` directly.
+❌ BAD: `total_fitness = sum(...); prob = fit / total_fitness` (Crashes if all fitnesses are 0)
+✅ GOOD: Add a fallback: `if total_fitness <= 0: return random.choice(competitors)`
 
 === SEARCH SPACE ===
-The GA optimizes the following SEARCH_SPACE:
+The GA optimizes the following discrete SEARCH_SPACE:
 {search_space}
 
-=== GA SCRIPT CONTEXT (READ-ONLY) ===
-Below is the FULL CODE of the current Genetic Algorithm. 
-Study it to understand the class variables (`self.population`, `self.search_space`, etc.) and helper methods (`self._coerce_gene_value`, etc.).
-DO NOT rewrite this script. It is strictly for context.
-
-<full_script>
-{full_code}
-</full_script>
+=== PREVIOUS ATTEMPTS & FEEDBACK ===
+Learn from past failures. DO NOT repeat failed logic. If a previous attempt failed, try a fundamentally different mathematical or probabilistic approach.
+{history_str}
 
 === YOUR SPECIFIC TASK ===
-You must intelligently improve ONLY the following specific function: `{method_name}`.
+You must rewrite the following component: `{method_name}`
 {task_specific_instructions}
 
-Current implementation:
+Current implementation to be replaced:
 <current_function>
 {code}
 </current_function>
 
 === STRICT OUTPUT FORMAT ===
-1. Output ONLY the python code for the improved `{method_name}` function.
-2. DO NOT output the rest of the `GeneticAlgorithm` class.
-3. DO NOT include example usage, test code, or markdown explanations.
-4. Your output MUST start exactly with `def {method_name}(self, ...):` and contain the correct indentation.
+1. Wrap your ENTIRE Python code output in a single ```python ... ``` markdown block.
+2. DO NOT write ANY text, explanations, thinking, or comments before or after the markdown block.
+3. The code inside the block MUST start exactly with `    def ` (4 spaces indent).
+4. Output ALL required methods in a single continuous block.
 """
 
-INSTRUCTIONS = {
-    # "mutate_gene": """
-    # Task: Improve the `mutate_gene` helper.
-    # - `current_value`: the current gene value to mutate away from.
-    # - `possible_values`: a list of valid replacement values.
-    # - Strategy: Consider implementing logic to handle numeric parameters (like `lr`, `dropout_prob`) with small random walks, while treating categorical parameters (like `activation`) with random choice.
-    # """,
-    "mutate_gene": """
-Task: Improve the `mutate_gene` helper.
-- `current_value`: the current gene value to mutate away from.
-- `possible_values`: a list of valid replacement values from the search space.
+# # [ORIGINAL INSTRUCTIONS — commented out 2026-05-24]
+# # (Old per-method and combined instructions removed)
+# # [END ORIGINAL]
 
-HARD CONSTRAINTS (violating any of these will crash the pipeline):
-1. You may ONLY use the two arguments: `current_value` and `possible_values`. Do NOT reference `self.search_space`, `possible_space`, or any variable not in the function signature.
-2. The return value MUST always be an element of `possible_values`. NEVER use arithmetic (e.g., `value += 0.1`, `value + random.choice([-1,1])`) to invent new values — genes are discrete.
-3. You may use `random`, `np`, and standard Python builtins. Do NOT import anything else.
-4. For numeric genes: prefer choosing the nearest neighbor in `possible_values` to `current_value` to simulate a random walk within the valid space.
-5. For categorical genes: use `random.choice(possible_values)`.
-""",
-    "combine_genes": """
-Task: Improve the `combine_genes` crossover helper.
-- `gene_name` (str): name of the gene being crossed over.
-- `parent1_value`, `parent2_value`: the two parent gene values.
-- `crossover_point`, `gene_index`, `total_genes`: position info.
-- Strategy: Look at the gene name. DO NOT invent blended float values (e.g., averaging) because the output MUST exist in `self.search_space[gene_name]`. You can use random chance or distance-based logic.
-""",
-    "select_competitor": """
-Task: Improve the `select_competitor` tournament selection helper.
-- `competitors`: a list of dicts, each with 'chromosome' (dict) and 'fitness' (float or None) keys.
-- Strategy: Pick the best individual from the competitors. Consider advanced strategies like fitness-proportional selection, diversity bonuses, or probabilistic tournament selection to prevent premature convergence.
+INSTRUCTIONS = {
+    "evolution_strategy": """
+Task: Design a complete, cohesive evolutionary strategy by implementing ALL 6 of the following methods in the exact order listed:
+1. `combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes)`
+2. `_crossover(self, parent1_chromo, parent2_chromo)`
+3. `mutate_gene(self, current_value, possible_values)`
+4. `_mutate(self, chromosome)`
+5. `select_competitor(self, competitors)`
+6. `_selection(self)`
+
+STRATEGY GUIDELINES:
+- Crossover (`combine_genes`): Consider gene types. For numeric genes (lr, momentum), you might prefer the parent with the higher/lower value or random choice. For categorical/structural genes, random choice is safe. NEVER average or blend values.
+- Mutation (`mutate_gene`): You are given `possible_values` (a list of valid alternatives). Pick one. For numeric genes, picking the nearest neighbor in `possible_values` to `current_value` simulates a smooth random walk. For categorical, use `random.choice()`.
+- Selection (`select_competitor`): `competitors` is a list of dicts: `{'chromosome': {...}, 'fitness': float or None}`. Implement a robust selection (e.g., probabilistic tournament, rank-based, or fitness-proportional). YOU MUST handle the edge case where all fitnesses are 0 or None to prevent ZeroDivisionError.
+
+HELPER METHOD REMINDERS:
+- In `_crossover` and `_mutate`, you MUST return `self._sanitize_chromosome(new_chromo_dict)`.
+- In `mutate_gene`, the return value MUST be an element of `possible_values`.
 """
 }
 
@@ -110,120 +123,112 @@ class MetaEvolver:
         
         # --- Experience Replay Buffer ---
         self.success_buffer = []
+        self.attempt_history = []
 
     def run_benchmark(self):
+        import statistics
         cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP), "--clean"]
         env = os.environ.copy()
         env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
-        try:
-            # Increased timeout to 6 hours for large generations
-            # Real-Time Logging with Popen
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
-            
-            full_output = ""
-            for line in process.stdout:
-                print(line, end="") # Stream line
-                full_output += line
+        runs = 3
+        scores = []
+        peak_accs = []
+        
+        for i in range(runs):
+            print(f"\n[Meta] Running Benchmark {i+1}/{runs}...")
+            try:
+                # Real-Time Logging with Popen
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
                 
-            process.wait(timeout=21600)
-            
-            # match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
-            # if match:
-            #     return float(match.group(1))
-            # else:
-            #     print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
-            #     return 0.0
-            
-            score_match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
-            score = float(score_match.group(1)) if score_match else 0.0
-            
-            peak_match = re.search(r"PEAK_ACCURACY:\s*([\d\.]+)", full_output)
-            peak_acc = float(peak_match.group(1)) if peak_match else 0.0
-            
-            if not score_match:
-                print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
-            
-            return {"score": score, "peak_accuracy": peak_acc}
-        except Exception as e: 
-             print(f"[Meta] Benchmark Exception: {e}")
-             return {"score": 0.0, "peak_accuracy": 0.0}
+                full_output = ""
+                for line in process.stdout:
+                    print(line, end="") # Stream line
+                    full_output += line
+                    
+                process.wait(timeout=21600)
+                
+                score_match = re.search(r"META_SCORE:\s*([\d\.]+)", full_output)
+                score = float(score_match.group(1)) if score_match else 0.0
+                
+                peak_match = re.search(r"PEAK_ACCURACY:\s*([\d\.]+)", full_output)
+                peak_acc = float(peak_match.group(1)) if peak_match else 0.0
+                
+                if not score_match:
+                    print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
+                
+                scores.append(score)
+                peak_accs.append(peak_acc)
+            except Exception as e: 
+                 print(f"[Meta] Benchmark Exception: {e}")
+                 scores.append(0.0)
+                 peak_accs.append(0.0)
+        
+        median_score = statistics.median(scores) if scores else 0.0
+        median_peak = statistics.median(peak_accs) if peak_accs else 0.0
+        print(f"[Meta] Median Score over {runs} runs: {median_score:.4f} (Scores: {scores})")
+        return {"score": median_score, "peak_accuracy": median_peak}
 
     def _extract_method(self, source_code, method_name):
+        # We now extract based on markers rather than AST
+        start_marker = f"    # --- START LLM: EVOLUTION STRATEGY ---"
+        end_marker = f"    # --- END LLM: EVOLUTION STRATEGY ---"
+        
         try:
-            tree = ast.parse(source_code)
-            t_class = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "GeneticAlgorithm"), None)
-            if not t_class: return None, None, 0
-            node = next((n for n in t_class.body if isinstance(n, ast.FunctionDef) and n.name == method_name), None)
-            if node:
-                # Use Line numbers for robust extraction
-                lines = source_code.splitlines(keepends=True)
-                # node.lineno is 1-indexed. node.end_lineno is inclusive.
-                start_line = node.lineno - 1
-                end_line = node.end_lineno
+            start_idx = source_code.find(start_marker)
+            end_idx = source_code.find(end_marker)
+            
+            if start_idx != -1 and end_idx != -1:
+                # To include the full line of the end marker
+                end_idx = source_code.find("\n", end_idx)
+                if end_idx == -1: end_idx = len(source_code)
+                else: end_idx += 1
                 
-                # Check for decorators (they are before the def)
-                if node.decorator_list:
-                    start_line = node.decorator_list[0].lineno - 1
-
-                extracted_source = "".join(lines[start_line:end_line])
+                # To include the full line of the start marker (from the preceding newline)
+                line_start_idx = source_code.rfind("\n", 0, start_idx)
+                if line_start_idx == -1: line_start_idx = 0
+                else: line_start_idx += 1
                 
-                # Calculate byte offsets
-                # We simply join the preceding lines to find start byte
-                start_byte = sum(len(line) for line in lines[:start_line])
-                end_byte = sum(len(line) for line in lines[:end_line])
+                extracted_source = source_code[line_start_idx:end_idx]
                 
-                return extracted_source, (start_byte, end_byte), node.col_offset
+                return extracted_source, (line_start_idx, end_idx), 4 # 4 spaces indent
         except: pass
         return None, None, 0
 
+    # # [ORIGINAL _extract_function_body — commented out 2026-05-24]
+    # def _extract_function_body(self, text, method_name):
+    #     if "```python" in text:
+    #         block = text.split("```python")[1].split("```")[0].strip()
+    #         return block
+    #     elif "```" in text:
+    #         block = text.split("```")[1].split("```")[0].strip()
+    #         return block
+    #     return text.strip()
+    # # [END ORIGINAL]
+
     def _extract_function_body(self, text, method_name):
-        """
-        Robustly extract a function definition from a string that might contain chatter.
-        Handles multiple occurrences by picking the last valid one.
-        """
-        candidates = []
-        lines = text.splitlines()
-        
-        # Find all start indices of 'def method_name'
-        start_indices = [i for i, line in enumerate(lines) if line.strip().startswith(f"def {method_name}")]
-        
-        for start_idx in start_indices:
-            extracted_lines = [lines[start_idx]]
-            # Determine indentation of the body (first non-empty line after def)
-            body_indent = None
+        """Extract the code block from the LLM response robustly."""
+        # --- Output Validation ---
+        if any(bad in text for bad in ["import torch", "class FractalNet", "def train("]):
+            print(f"[Meta] Validation failed: LLM generated hallucinated codebase instead of GA methods.")
+            return None
             
-            for i in range(start_idx + 1, len(lines)):
-                line = lines[i]
-                if not line.strip(): # Empty line, keep it
-                    extracted_lines.append(line)
-                    continue
-                
-                current_indent = len(line) - len(line.lstrip())
-                
-                if body_indent is None:
-                    body_indent = current_indent
-                    if body_indent == 0: # Body must be indented!
-                        break 
-                
-                if current_indent < body_indent:
-                    break # End of function
-                
-                extracted_lines.append(line)
-            
-            # Form candidate code
-            code_str = "\n".join(extracted_lines)
-            try:
-                # Verify syntax
-                tree = ast.parse(textwrap.dedent(code_str))
-                if tree.body and isinstance(tree.body[0], ast.FunctionDef):
-                    candidates.append(ast.unparse(tree))
-            except:
-                continue
+        if "```python" in text:
+            block = text.split("```python")[1].split("```")[0].strip()
+            return block
+        elif "```" in text:
+            parts = text.split("```")
+            if len(parts) >= 3:
+                return parts[1].strip()
+            elif len(parts) == 2:
+                return parts[1].strip()
+        
+        # Ultimate fallback: strip conversational text
+        lines = text.strip().splitlines()
+        code_lines = [l for l in lines if not l.strip().startswith(("Here", "Note", "I have", "```"))]
+        return "\n".join(code_lines).strip()
 
-        return candidates[-1] if candidates else None
-
-    def evolve_component(self, method_name):
+    def evolve_component(self, method_name, attempt=1, total_attempts=5):
         print(f"\n[Meta] Evolving: {method_name}")
         with open(TARGET_FILE, 'r') as f: full_code = f.read()
         
@@ -232,31 +237,36 @@ class MetaEvolver:
 
         print(f"--- [DEBUG] Input Code ---\n{orig_code}\n-------------------------")
 
+        # Format history string
+        history_str = "No previous attempts yet."
+        if hasattr(self, 'attempt_history') and self.attempt_history:
+            history_lines = []
+            for idx, h in enumerate(self.attempt_history[-3:]):
+                status = h.get("status", "Unknown")
+                score = h.get("score", 0.0)
+                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}\nCode:\n```python\n{h.get('code')}\n```")
+            history_str = "\n\n".join(history_lines)
+
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
             search_space=SEARCH_SPACE_STR,
-            full_code=full_code,
             method_name=method_name,
             task_specific_instructions=INSTRUCTIONS[method_name],
-            code=orig_code
+            code=orig_code,
+            history_str=history_str
         )
-        raw_res = self.llm.generate(prompt, max_new_tokens=800)
+        
+        # Temperature scheduling: 0.9 down to 0.4
+        progress = (attempt - 1) / max(1, total_attempts - 1)
+        temperature = max(0.4, 0.9 - (0.5 * progress))
+        print(f"[Meta] Generation Temperature: {temperature:.2f}")
+        
+        raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
         
         print(f"--- [DEBUG] Raw Response ---\n{raw_res}\n--------------------------")
         
         # Cleanup & Extraction
-        new_code = raw_res
-        extracted = None
-        if "```python" in new_code: 
-            # Try extracting from markdown block first
-            try:
-                block = new_code.split("```python")[1].split("```")[0]
-                extracted = self._extract_function_body(block, method_name)
-                if extracted: new_code = extracted
-            except: pass
-        
-        if f"def {method_name}" in raw_res and not extracted:
-             extracted = self._extract_function_body(raw_res, method_name)
+        extracted = self._extract_function_body(raw_res, method_name)
         
         if extracted:
             new_code = extracted
@@ -332,7 +342,7 @@ class MetaEvolver:
         # RL Loop
         reward = calculate_meta_reward(new_score, self.baseline_score, valid_syntax)
         
-        fine_tune_expected = (reward > 0 and valid_syntax)
+        fine_tune_expected = True # We always train now! (Either positive or negative)
         fine_tune_started = False
         fine_tune_completed = False
         fine_tune_failed = False
@@ -349,55 +359,67 @@ class MetaEvolver:
         adapter_save_start_time = None
         adapter_save_end_time = None
         
-        if fine_tune_expected:
-            print("--> SUCCESS. Updating Baseline (EMA) & Fine-tuning.")
+        if valid_syntax and reward > 0:
+            print("--> SUCCESS. Updating Baseline (EMA) & Fine-tuning on Success.")
             # EMA Update: 20% of the new score, 80% of the old baseline
             if self.baseline_score == 0.0:
                 self.baseline_score = new_score  # Initialize on first success
             else:
                 self.baseline_score = (0.2 * new_score) + (0.8 * self.baseline_score)
             
-            # --- Experience Replay: append success and sample a batch ---
+            # --- Experience Replay: append success ---
             self.success_buffer.append({'prompt': prompt, 'completion': new_code})
             if len(self.success_buffer) > 20:
                 self.success_buffer.pop(0)  # Cap buffer at 20, drop oldest
+        else:
+            print("--> FAILURE/REGRESSION. Fine-tuning on Baseline (Negative Sampling).")
+            # If valid_syntax is false or reward <= 0, we teach it to revert to orig_code
+            self.success_buffer.append({'prompt': prompt, 'completion': orig_code})
+            if len(self.success_buffer) > 20:
+                self.success_buffer.pop(0)
+
+        # Sample a batch
+        batch_size = min(4, len(self.success_buffer))
+        training_batch = random.sample(self.success_buffer, batch_size)
+        train_examples_count = batch_size
+        
+        print(f"[LoRA] Fine-tune start (replay buffer: {len(self.success_buffer)} items, batch: {batch_size})")
+        fine_tune_started = True
+        fine_tune_start_time = datetime.now().isoformat()
+        try:
+            self.llm.train_on_buffer(training_batch, epochs=train_epochs)
+            fine_tune_completed = True
+            print("[LoRA] Fine-tune complete")
+        except Exception as e:
+            fine_tune_failed = True
+            fine_tune_exception = str(e)
+            print(f"[LoRA] Fine-tune failed: {e}")
+        finally:
+            fine_tune_end_time = datetime.now().isoformat()
             
-            batch_size = min(4, len(self.success_buffer))
-            training_batch = random.sample(self.success_buffer, batch_size)
-            train_examples_count = batch_size
-            
-            print(f"[LoRA] Fine-tune start (replay buffer: {len(self.success_buffer)} items, batch: {batch_size})")
-            fine_tune_started = True
-            fine_tune_start_time = datetime.now().isoformat()
+        if fine_tune_completed:
+            print("[LoRA] Adapter save start")
+            adapter_save_started = True
+            adapter_save_start_time = datetime.now().isoformat()
             try:
-                # self.llm.train_on_buffer([{'prompt': prompt, 'completion': new_code}], epochs=train_epochs)
-                self.llm.train_on_buffer(training_batch, epochs=train_epochs)
-                fine_tune_completed = True
-                print("[LoRA] Fine-tune complete")
+                self.llm.save_adapters(ADAPTER_SAVE_PATH)
+                adapter_save_completed = True
+                print("[LoRA] Adapter save complete")
             except Exception as e:
-                fine_tune_failed = True
-                fine_tune_exception = str(e)
-                print(f"[LoRA] Fine-tune failed: {e}")
+                adapter_save_failed = True
+                adapter_save_exception = str(e)
+                print(f"[LoRA] Adapter save failed: {e}")
             finally:
-                fine_tune_end_time = datetime.now().isoformat()
+                adapter_save_end_time = datetime.now().isoformat()
                 
-            if fine_tune_completed:
-                print("[LoRA] Adapter save start")
-                adapter_save_started = True
-                adapter_save_start_time = datetime.now().isoformat()
-                try:
-                    self.llm.save_adapters(ADAPTER_SAVE_PATH)
-                    adapter_save_completed = True
-                    print("[LoRA] Adapter save complete")
-                except Exception as e:
-                    adapter_save_failed = True
-                    adapter_save_exception = str(e)
-                    print(f"[LoRA] Adapter save failed: {e}")
-                finally:
-                    adapter_save_end_time = datetime.now().isoformat()
-        elif valid_syntax:
+        if 'bkp' in locals() and not (valid_syntax and reward > 0):
             print("--> Reverting File.")
             shutil.copy(bkp, TARGET_FILE)
+            
+        # Log attempt history
+        status = "Success" if (valid_syntax and reward > 0) else ("Syntax Error" if not valid_syntax else "Regression")
+        if not hasattr(self, 'attempt_history'): self.attempt_history = []
+        self.attempt_history.append({"status": status, "score": new_score, "code": new_code})
             
         # Log entry
         log_entry = {
@@ -430,18 +452,45 @@ class MetaEvolver:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(log_entry) + "\n")
 
+        # Return True if this attempt was a success (valid + improved)
+        return bool(valid_syntax and reward > 0)
+
 if __name__ == "__main__":
-    MODEL_PATH = "deepseek-ai/deepseek-coder-6.7b-instruct" 
+    # MODEL_PATH = "deepseek-ai/deepseek-coder-6.7b-instruct" 
+    MODEL_PATH = "Qwen/Qwen2.5-Coder-7B-Instruct"
     evolver = MetaEvolver(MODEL_PATH)
-    
+
     # LOOP: CYCLE THROUGH ALL EVOLVABLE COMPONENTS
-    META_ITERATIONS = int(os.environ.get("META_ATTEMPTS"))
-    COMPONENTS = ["mutate_gene", "combine_genes", "select_competitor"]
-    for i in range(META_ITERATIONS):
-        component = COMPONENTS[i % len(COMPONENTS)]
-        print(f"\n=== Meta-Evolution Iteration {i+1}/{META_ITERATIONS} — Evolving: {component} ===")
-        evolver.evolve_component(component) 
+    # [OLD — fixed attempt count, stopped after N tries regardless of success]
+    # META_ITERATIONS = int(os.environ.get("META_ATTEMPTS"))
+    # for i in range(META_ITERATIONS):
+    #     component = COMPONENTS[i % len(COMPONENTS)]
+    #     print(f"\n=== Meta-Evolution Iteration {i+1}/{META_ITERATIONS} ===")
+    #     evolver.evolve_component(component, attempt=i+1, total_attempts=META_ITERATIONS)
+    #     time.sleep(2)
+    # [END OLD]
+
+    # NEW — keep trying until META_ITERATIONS *successful* evolutions are achieved
+    # Priority: env var META_ATTEMPTS > model_config.json meta_attempts > default 5
+    META_ITERATIONS = int(os.environ.get("META_ATTEMPTS", evolver.llm.config.get("meta_attempts", 5)))
+    # COMPONENTS = ["mutate_gene", "combine_genes", "select_competitor"]
+    COMPONENTS = ["evolution_strategy"]
+
+    successes = 0
+    total_attempts = 0
+    print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry on failure)")
+    while successes < META_ITERATIONS:
+        total_attempts += 1
+        component = COMPONENTS[(total_attempts - 1) % len(COMPONENTS)]
+        print(f"\n=== Attempt {total_attempts} | Successes: {successes}/{META_ITERATIONS} — Evolving: {component} ===")
+        success = evolver.evolve_component(component, attempt=total_attempts, total_attempts=META_ITERATIONS)
+        if success:
+            successes += 1
+            print(f"[Meta] ✓ Success #{successes}/{META_ITERATIONS} achieved on attempt {total_attempts}")
+        else:
+            print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (successes so far: {successes}/{META_ITERATIONS})")
         time.sleep(2)
+    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions in {total_attempts} total attempts ===")
     
     # --- Generate visualizations after all iterations ---
     try:

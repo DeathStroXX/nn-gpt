@@ -4,13 +4,13 @@ from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
 # LR: 0.001
-# Momentum: 0.95
+# Momentum: 0.8
 # Activation: ReLU
 # Kernel: 5
 # Pooling: Max
 # Conv Type: Standard
-# Norm Type: BatchNorm
-# Optimizer: AdamW
+# Norm Type: InstanceNorm
+# Optimizer: SGD
 # FC Dropout: 0.5
 
 # --- MANDATORY FOR EVAL ENGINE ---
@@ -19,7 +19,7 @@ def supported_hyperparameters():
 
 # --- Helper Classes ---
 class FractalDropPath(nn.Module):
-    def __init__(self, drop_prob: float = 0.0):
+    def __init__(self, drop_prob: float = 0.1):
         super().__init__()
         self.drop_prob = drop_prob
 
@@ -41,7 +41,7 @@ class FractalBlock(nn.Module):
 
         activation_layer = nn.ReLU(inplace=True)
         conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
-        norm_layer = nn.BatchNorm2d(channels)
+        norm_layer = nn.InstanceNorm2d(channels, affine=True)
 
         # Assemble Convolutional Sequence
         self.conv = nn.Sequential(
@@ -70,7 +70,7 @@ class Net(nn.Module):
 
         c_in = 3 
         n_classes = out_shape[0] if out_shape else 10
-        start_chan = int(64)  
+        start_chan = int(32)  
 
         self.entry = nn.Sequential(
             nn.Conv2d(c_in, start_chan, kernel_size=3, padding=1),
@@ -85,7 +85,7 @@ class Net(nn.Module):
         total_blocks = int(3)
 
         for i in range(total_blocks):
-            blocks.append(FractalBlock(int(2), cur_chan, 0.0))
+            blocks.append(FractalBlock(int(2), cur_chan, 0.1))
             pools.append(nn.MaxPool2d(2))
 
             if i < total_blocks - 1:
@@ -129,7 +129,7 @@ class Net(nn.Module):
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], betas=(prm['momentum'], 0.999), weight_decay=1e-4)
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
         self.max_batches = prm.get('max_batches', None)
         return self.optimizer
 

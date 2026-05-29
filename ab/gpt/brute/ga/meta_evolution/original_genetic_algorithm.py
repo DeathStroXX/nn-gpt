@@ -58,41 +58,17 @@ class GeneticAlgorithm:
             except: pass
         return 0, None
 
-    # # [ORIGINAL EVOLUTION STRATEGY — commented out 2026-05-24]
-    # # # --- START LLM: CROSSOVER ---
-    # def mutate_gene(self, current_value, possible_values):
-    #     if not isinstance(possible_values, list):
-    #         raise ValueError('possible_values should be a list')
-    #     if not possible_values:
-    #         return current_value
-    #     import random
-    #     new_value = random.choice(possible_values)
-    #     if isinstance(current_value, (int, float, np.integer, np.floating)):
-    #         if new_value == current_value:
-    #             new_value += random.choice([-1, 1])
-    #         else:
-    #             new_value += random.choice([-0.1, 0.1])
-    #     return new_value
-    # def _mutate(self, chromosome):
-    #     ...
-    # def combine_genes(self, gene_name, ...):
-    #     ...  # Had 'nn_blocks' typo
-    # def _crossover(self, parent1_chromo, parent2_chromo):
-    #     ...
-    # def select_competitor(self, competitors):
-    #     ...  # No ZeroDivisionError guard
-    # def _selection(self):
-    #     ...
-    # # [END ORIGINAL]
-
-    # --- START LLM: EVOLUTION STRATEGY ---
+    # --- START LLM: CROSSOVER ---
     def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
-        """Decide which parent's gene to use for a child chromosome."""
+        """
+        Decide which parent's gene to use for a child chromosome.
+        Returns the chosen gene value.
+        """
         if parent1_value == parent2_value:
             return parent1_value
         if gene_name in ['lr', 'momentum']:
             return parent1_value if parent1_value > parent2_value else parent2_value
-        elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'n_blocks']:
+        elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'nn_blocks']:
             return random.choice([parent1_value, parent2_value])
         else:
             return parent1_value if gene_index < crossover_point else parent2_value
@@ -104,21 +80,27 @@ class GeneticAlgorithm:
         for i, gene in enumerate(genes):
             child_chromo[gene] = self._coerce_gene_value(
                 gene,
-                self.combine_genes(gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes)),
+                self.combine_genes(
+                gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes)
+                ),
             )
         return self._sanitize_chromosome(child_chromo)
+    # --- END LLM: CROSSOVER ---
 
+    # --- START LLM: MUTATION ---
     def mutate_gene(self, current_value, possible_values):
         if not isinstance(possible_values, list):
             raise ValueError('possible_values should be a list')
         if not possible_values:
             return current_value
-        # Strictly pick from possible_values to prevent out-of-bounds errors
+        import random
+        new_value = random.choice(possible_values)
         if isinstance(current_value, (int, float, np.integer, np.floating)):
-            # Simulate random walk by picking nearest valid neighbor
-            return min(possible_values, key=lambda x: abs(float(x) - float(current_value)))
-        return random.choice(possible_values)
-
+            if new_value == current_value:
+                new_value += random.choice([-1, 1])
+            else:
+                new_value += random.choice([-0.1, 0.1])
+        return new_value
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
         for gene in self.search_space.keys():
@@ -130,20 +112,19 @@ class GeneticAlgorithm:
                         self.mutate_gene(mutated_chromo[gene], possibles)
                     )
         return self._sanitize_chromosome(mutated_chromo)
+    # --- END LLM: MUTATION ---
 
+    # --- START LLM: SELECTION ---
     def select_competitor(self, competitors):
-        fitnesses = [(x['fitness'] if x['fitness'] is not None else 0) for x in competitors]
-        total_fitness = sum(fitnesses)
-        if total_fitness <= 0:
-            return random.choice(competitors)
-        probabilities = [f / total_fitness for f in fitnesses]
-        return random.choices(competitors, weights=probabilities, k=1)[0]
+        total_fitness = sum((x['fitness'] if x['fitness'] is not None else 0 for x in competitors))
+        probabilities = [(x['fitness'] if x['fitness'] is not None else 0) / total_fitness for x in competitors]
+        return random.choices(competitors, probabilities, k=1)[0]
 
     def _selection(self):
         k = 3
         competitors = random.sample(self.population, min(k, len(self.population)))
         return self.select_competitor(competitors)
-    # --- END LLM: EVOLUTION STRATEGY ---
+    # --- END LLM: SELECTION ---
 
     def run(self, num_generations, fitness_function):
         start_gen, loaded_population = self._load_checkpoint()

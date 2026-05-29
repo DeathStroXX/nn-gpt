@@ -92,7 +92,7 @@ class LocalLLMLoader:
                 print(f"[LoRA] Adapter directory exists at {adapter_path} but no weight files found. Initializing fresh adapters...")
             else:
                 print("[LoRA] No adapter directory found. Initializing fresh adapters...")
-            # Target modules for DeepSeek
+            # Target modules for Qwen2.5 (same as DeepSeek — both Llama-style)
             target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
             
             peft_config = LoraConfig(
@@ -150,9 +150,13 @@ class LocalLLMLoader:
         # optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-5) # Lowered: 2e-4 was causing mode collapse
         
+        accumulation_steps = min(4, len(training_data)) # Accumulate over up to 4 examples
+        
         for epoch in range(epochs):
             total_loss = 0
-            for item in training_data:
+            optimizer.zero_grad()
+            
+            for i, item in enumerate(training_data):
                 # Format: "Prompt... \n Completion..."
                 full_text = item['prompt'] + "\n" + item['completion']
                 
@@ -167,18 +171,24 @@ class LocalLLMLoader:
                 prompt_length = prompt_tokens["input_ids"].shape[1]
                 
                 labels = inputs["input_ids"].clone()
-                labels[0, :prompt_length] = -100  # Mask prompt tokens from loss
+                # Safeguard: Don't mask out the entire sequence if the prompt got truncated
+                mask_length = min(prompt_length, labels.shape[1] - 1)
+                labels[0, :mask_length] = -100  # Mask prompt tokens from loss
                 
                 # # Causal LM: Labels = Inputs (old: trained on full prompt+completion)
                 # outputs = self.model(**inputs, labels=inputs["input_ids"])
                 outputs = self.model(**inputs, labels=labels)
-                loss = outputs.loss
                 
+                # Scale the loss since we are accumulating
+                loss = outputs.loss / accumulation_steps
                 loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
                 
-                total_loss += loss.item()
+                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(training_data):
+                    optimizer.step()
+                    optimizer.zero_grad()
+                
+                # Re-scale loss for reporting total_loss
+                total_loss += loss.item() * accumulation_steps
                 
             avg_loss = total_loss / len(training_data)
             print(f"[LoRA] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")

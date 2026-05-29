@@ -1,7 +1,7 @@
 {
   "alpha_pattern": {},
   "auto_mapping": null,
-  "base_model_name_or_path": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "base_model_name_or_path": "deepseek-ai/deepseek-coder-6.7b-instruct",
   "bias": "none",
   "corda_config": null,
   "eva_config": null,
@@ -24,13 +24,13 @@
   "rank_pattern": {},
   "revision": null,
   "target_modules": [
-    "k_proj",
+    "v_proj",
     "gate_proj",
-    "up_proj",
+    "k_proj",
     "q_proj",
     "o_proj",
-    "down_proj",
-    "v_proj"
+    "up_proj",
+    "down_proj"
   ],
   "task_type": "CAUSAL_LM",
   "trainable_token_indices": null,
