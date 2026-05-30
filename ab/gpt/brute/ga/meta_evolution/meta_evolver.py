@@ -44,8 +44,12 @@ SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 BASE_PROMPT_TEMPLATE = """
 ### ROLE & OBJECTIVE ###
 You are an elite AI Research Engineer and Evolutionary Computation Expert. 
-Your task is to rewrite the core evolutionary operators of a Genetic Algorithm (GA) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
+Your task is to rewrite the core evolutionary operators of a Quality-Diversity Genetic Algorithm (MAP-Elites) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
 Your generated code will be AUTOMATICALLY INJECTED into a production Python class via string replacement. Any syntax error, hallucinated import, or invalid indentation will crash the entire pipeline.
+
+Your objective is NOT just to produce a "good" algorithm in the abstract. You must propose crossover and mutation strategies that will theoretically expand the frontier of what the GA has seen:
+1. Break the Global SOTA peak accuracy.
+2. Discover novel, high-performing architectures to populate empty cells in the MAP-Elites Behavioral Archive.
 
 ### HARD CONSTRAINTS (CRITICAL) ###
 1. NO INVENTED VALUES: Genes are strictly discrete. You MUST ONLY select values from the provided `SEARCH_SPACE` or the `possible_values` list. NEVER use arithmetic (e.g., `val + 0.1`, `val * 2`, `random.uniform()`) to create new gene values.
@@ -67,10 +71,15 @@ The GA optimizes the following discrete SEARCH_SPACE:
 {search_space}
 
 === FULL CLASS CONTEXT ===
-Here is the current full implementation of the GeneticAlgorithm class for your reference:
+Here is the current full implementation of the GeneticAlgorithm class for your reference.
+Notice how the GA uses a MAP-Elites archive based on `n_blocks` and `base_channels`.
 <full_code>
 {full_code}
 </full_code>
+
+=== CURRENT SOTA & ARCHIVE FRONTIER ===
+- All-Time Global Best Peak Accuracy (SOTA): {global_best_score:.2f}%
+- MAP-Elites Archive Size: {global_archive_size} unique cells discovered
 
 === PREVIOUS ATTEMPTS & FEEDBACK ===
 Learn from past failures. DO NOT repeat failed logic. If a previous attempt failed, try a fundamentally different mathematical or probabilistic approach.
@@ -110,6 +119,8 @@ class MetaEvolver:
         # self.baseline_score = self.run_benchmark()
         # print(f"[Meta] Baseline Score: {self.baseline_score:.4f}")
         self.baseline_score = 0.0
+        self.global_best_score = 0.0
+        self.global_archive_size = 0
         
         # --- Experience Replay Buffer ---
         self.success_buffer = []
@@ -117,7 +128,8 @@ class MetaEvolver:
 
     def run_benchmark(self):
         import statistics
-        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP), "--clean"]
+        # Removed --clean to persist the GA archive and population across LLM attempts
+        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP)]
         env = os.environ.copy()
         env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
@@ -143,21 +155,28 @@ class MetaEvolver:
                 
                 peak_match = re.search(r"PEAK_ACCURACY:\s*([\d\.]+)", full_output)
                 peak_acc = float(peak_match.group(1)) if peak_match else 0.0
+
+                top3_match = re.search(r"TOP3_MEAN:\s*([\d\.]+)", full_output)
+                top3_acc = float(top3_match.group(1)) if top3_match else peak_acc
                 
-                if not score_match:
+                archive_match = re.search(r"ARCHIVE_SIZE:\s*(\d+)", full_output)
+                archive_size = int(archive_match.group(1)) if archive_match else 0
+                
+                if not top3_match:
                     print(f"[Meta] Benchmark Output (Snippet):\n{full_output[-1000:]}")
                 
-                scores.append(score)
+                scores.append(top3_acc) # Track Top3 for secondary density reward
                 peak_accs.append(peak_acc)
             except Exception as e: 
                  print(f"[Meta] Benchmark Exception: {e}")
                  scores.append(0.0)
                  peak_accs.append(0.0)
+                 archive_size = 0
         
-        median_score = statistics.median(scores) if scores else 0.0
+        median_top3 = statistics.median(scores) if scores else 0.0
         median_peak = statistics.median(peak_accs) if peak_accs else 0.0
-        print(f"[Meta] Median Score over {runs} runs: {median_score:.4f} (Scores: {scores})")
-        return {"score": median_score, "peak_accuracy": median_peak}
+        print(f"[Meta] Median Top-3 Quality over {runs} runs: {median_top3:.4f}")
+        return {"top3_mean": median_top3, "peak_accuracy": median_peak, "archive_size": archive_size}
 
     def _extract_method(self, source_code, method_name):
         import ast
@@ -239,7 +258,9 @@ class MetaEvolver:
             method_name=method_name,
             task_specific_instructions=INSTRUCTIONS.get(method_name, ""),
             code=orig_code,
-            history_str=history_str
+            history_str=history_str,
+            global_best_score=self.global_best_score,
+            global_archive_size=self.global_archive_size
         )
         
         # Temperature scheduling: 0.9 down to 0.4
@@ -282,7 +303,7 @@ class MetaEvolver:
             print(f"[Meta] Syntax Error: {e}")
 
         # new_score = 0.0
-        bench_stats = {"score": 0.0, "peak_accuracy": 0.0}
+        bench_stats = {"top3_mean": 0.0, "peak_accuracy": 0.0, "archive_size": self.global_archive_size}
         
         if valid_syntax:
             target_filename = os.path.basename(TARGET_FILE)
@@ -323,10 +344,30 @@ class MetaEvolver:
                 print("[Meta] Benchmarking...")
                 bench_stats = self.run_benchmark()
 
-        new_score = bench_stats["score"]
+        new_score = bench_stats["peak_accuracy"]
+        top3_mean = bench_stats["top3_mean"]
+        new_archive_size = bench_stats["archive_size"]
+        
+        # Calculate novelty (how many new cells were filled)
+        archive_novelty = max(0, new_archive_size - self.global_archive_size)
 
-        # RL Loop
-        reward = calculate_meta_reward(new_score, self.baseline_score, valid_syntax)
+        # RL Loop: Pass all frontier metrics to the reward calculator
+        reward = calculate_meta_reward(
+            current_score=new_score, 
+            best_ever_score=self.global_best_score, 
+            top3_mean=top3_mean, 
+            archive_novelty=archive_novelty, 
+            valid_syntax=valid_syntax
+        )
+        
+        # Update Global Frontier Tracking
+        if valid_syntax:
+            if new_score > self.global_best_score:
+                print(f"[Meta] --> NEW GLOBAL SOTA! {new_score:.2f}% (was {self.global_best_score:.2f}%)")
+                self.global_best_score = new_score
+            if new_archive_size > self.global_archive_size:
+                print(f"[Meta] --> ARCHIVE EXPANDED! {new_archive_size} cells (was {self.global_archive_size})")
+                self.global_archive_size = new_archive_size
         
         fine_tune_expected = True # We always train now! (Either positive or negative)
         fine_tune_started = False

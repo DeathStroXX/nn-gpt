@@ -435,7 +435,11 @@ if __name__ == "__main__":
             checkpoint_path=CHECKPOINT
         )
         
-        best, history = ga.run(args.gens, fitness_function)
+        # To support continuous evolution across LLM attempts, advance the generations
+        start_gen, _ = ga._load_checkpoint()
+        target_gens = start_gen + args.gens
+        print(f"[Run] Continuing evolution from gen {start_gen} to {target_gens}")
+        best, history = ga.run(target_gens, fitness_function)
         
         # Save Best Architecture
         if best:
@@ -483,19 +487,25 @@ if __name__ == "__main__":
                  json.dump(best_info, f, indent=4, cls=NumpyEncoder)
              print(f"[Best] Saved best info metadata to {info_path}")
 
-        # ROBUST META-SCORE CALCULATION
+        # ROBUST META-SCORE CALCULATION FOR MAP-ELITES
         if history:
             peak = max(history)
-            # Average accuracy across all generations (rewards fast convergence, penalizes deep holes)
-            avg_acc = sum(history) / len(history) 
-            # 60% weight to peak performance, 40% weight to maintaining high accuracy
-            meta_score = (peak * 0.6) + (avg_acc * 0.4)
+            
+            # Compute top-3 mean of the final population
+            if len(ga.population) >= 3:
+                top3_mean = sum(ind['fitness'] for ind in ga.population[:3] if ind['fitness'] is not None) / 3.0
+            else:
+                top3_mean = peak
+                
+            archive_size = len(ga.archive)
         else:
-            meta_score = 0.0
+            top3_mean = 0.0
             peak = 0.0
+            archive_size = 0
             
         print(f"PEAK_ACCURACY: {peak:.4f}")
-        print(f"META_SCORE: {meta_score:.4f}")
+        print(f"TOP3_MEAN: {top3_mean:.4f}")
+        print(f"ARCHIVE_SIZE: {archive_size}")
 
     except Exception as e:
         import traceback

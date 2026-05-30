@@ -3,12 +3,12 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.001
-# Momentum: 0.85
-# Activation: ReLU
+# LR: 0.005
+# Momentum: 0.75
+# Activation: SiLU
 # Kernel: 5
 # Pooling: Max
-# Conv Type: Standard
+# Conv Type: Depthwise
 # Norm Type: BatchNorm
 # Optimizer: AdamW
 # FC Dropout: 0.2
@@ -19,7 +19,7 @@ def supported_hyperparameters():
 
 # --- Helper Classes ---
 class FractalDropPath(nn.Module):
-    def __init__(self, drop_prob: float = 0.1):
+    def __init__(self, drop_prob: float = 0.2):
         super().__init__()
         self.drop_prob = drop_prob
 
@@ -39,8 +39,11 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        activation_layer = nn.ReLU(inplace=True)
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
+        activation_layer = nn.SiLU(inplace=True)
+        conv_layer = nn.Sequential(
+    nn.Conv2d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False),
+    nn.Conv2d(channels, channels, kernel_size=1, bias=False)
+)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
@@ -70,7 +73,7 @@ class Net(nn.Module):
 
         c_in = 3 
         n_classes = out_shape[0] if out_shape else 10
-        start_chan = int(64)  
+        start_chan = int(32)  
 
         self.entry = nn.Sequential(
             nn.Conv2d(c_in, start_chan, kernel_size=3, padding=1),
@@ -85,7 +88,7 @@ class Net(nn.Module):
         total_blocks = int(3)
 
         for i in range(total_blocks):
-            blocks.append(FractalBlock(int(2), cur_chan, 0.1))
+            blocks.append(FractalBlock(int(3), cur_chan, 0.2))
             pools.append(nn.MaxPool2d(2))
 
             if i < total_blocks - 1:
