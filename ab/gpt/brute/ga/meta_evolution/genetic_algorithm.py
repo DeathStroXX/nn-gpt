@@ -87,15 +87,15 @@ class GeneticAlgorithm:
 
     # --- START LLM: EVOLUTION STRATEGY ---
     def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
-        """Decide which parent's gene to use for a child chromosome."""
-        if parent1_value == parent2_value:
-            return parent1_value
-        if gene_name in ['lr', 'momentum']:
-            return parent1_value if parent1_value > parent2_value else parent2_value
-        elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'n_blocks']:
-            return random.choice([parent1_value, parent2_value])
-        else:
-            return parent1_value if gene_index < crossover_point else parent2_value
+            """Decide which parent's gene to use for a child chromosome."""
+            if parent1_value == parent2_value:
+                return parent1_value
+            if gene_name in ['lr', 'momentum']:
+                return random.choice([parent1_value, parent2_value])
+            elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'n_blocks']:
+                return random.choice([parent1_value, parent2_value])
+            else:
+                return random.choice([parent1_value, parent2_value])
 
     def _crossover(self, parent1_chromo, parent2_chromo):
         child_chromo = {}

@@ -115,6 +115,11 @@ class LocalLLMLoader:
             prompt, return_tensors="pt", truncation=True,
             max_length=self.config.get("context_length", 4096)
         )
+        
+        # Add context length warning
+        num_tokens = inputs.input_ids.shape[1]
+        if num_tokens > 3500:
+            print(f"[WARN] Prompt is very large ({num_tokens} tokens). Nearing 4096 limit, which may cause truncation and mode collapse.")
         if torch.cuda.is_available():
             inputs = inputs.to("cuda")
         
@@ -181,9 +186,17 @@ class LocalLLMLoader:
                 
                 # Scale the loss since we are accumulating
                 loss = outputs.loss / accumulation_steps
+                
+                # Safeguard: Skip if loss is NaN or Inf to prevent adapter corruption
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[WARN] Loss is {loss.item()}. Skipping gradient update for this example to prevent mode collapse.")
+                    continue
+                    
                 loss.backward()
                 
                 if (i + 1) % accumulation_steps == 0 or (i + 1) == len(training_data):
+                    # Gradient clipping to prevent exploding gradients
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                     optimizer.step()
                     optimizer.zero_grad()
                 

@@ -66,6 +66,12 @@ Your generated code will be AUTOMATICALLY INJECTED into a production Python clas
 The GA optimizes the following discrete SEARCH_SPACE:
 {search_space}
 
+=== FULL CLASS CONTEXT ===
+Here is the current full implementation of the GeneticAlgorithm class for your reference:
+<full_code>
+{full_code}
+</full_code>
+
 === PREVIOUS ATTEMPTS & FEEDBACK ===
 Learn from past failures. DO NOT repeat failed logic. If a previous attempt failed, try a fundamentally different mathematical or probabilistic approach.
 {history_str}
@@ -83,32 +89,16 @@ Current implementation to be replaced:
 1. Wrap your ENTIRE Python code output in a single ```python ... ``` markdown block.
 2. DO NOT write ANY text, explanations, thinking, or comments before or after the markdown block.
 3. The code inside the block MUST start exactly with `    def ` (4 spaces indent).
-4. Output ALL required methods in a single continuous block.
+4. Output EXACTLY ONE method: `{method_name}`.
 """
-
-# # [ORIGINAL INSTRUCTIONS — commented out 2026-05-24]
-# # (Old per-method and combined instructions removed)
-# # [END ORIGINAL]
 
 INSTRUCTIONS = {
-    "evolution_strategy": """
-Task: Design a complete, cohesive evolutionary strategy by implementing ALL 6 of the following methods in the exact order listed:
-1. `combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes)`
-2. `_crossover(self, parent1_chromo, parent2_chromo)`
-3. `mutate_gene(self, current_value, possible_values)`
-4. `_mutate(self, chromosome)`
-5. `select_competitor(self, competitors)`
-6. `_selection(self)`
-
-STRATEGY GUIDELINES:
-- Crossover (`combine_genes`): Consider gene types. For numeric genes (lr, momentum), you might prefer the parent with the higher/lower value or random choice. For categorical/structural genes, random choice is safe. NEVER average or blend values.
-- Mutation (`mutate_gene`): You are given `possible_values` (a list of valid alternatives). Pick one. For numeric genes, picking the nearest neighbor in `possible_values` to `current_value` simulates a smooth random walk. For categorical, use `random.choice()`.
-- Selection (`select_competitor`): `competitors` is a list of dicts: `{'chromosome': {...}, 'fitness': float or None}`. Implement a robust selection (e.g., probabilistic tournament, rank-based, or fitness-proportional). YOU MUST handle the edge case where all fitnesses are 0 or None to prevent ZeroDivisionError.
-
-HELPER METHOD REMINDERS:
-- In `_crossover` and `_mutate`, you MUST return `self._sanitize_chromosome(new_chromo_dict)`.
-- In `mutate_gene`, the return value MUST be an element of `possible_values`.
-"""
+    "combine_genes": "Task: Implement `combine_genes` to decide which parent's gene to use for a child chromosome. For numeric genes (lr, momentum), prefer higher/lower or random choice. For categorical, random choice is safe.",
+    "_crossover": "Task: Implement `_crossover`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo using combine_genes. You MUST return self._sanitize_chromosome(child_chromo).",
+    "mutate_gene": "Task: Implement `mutate_gene`. You are given `possible_values`. Pick one. For numeric genes, picking the nearest valid value is good. For categorical, use random.choice.",
+    "_mutate": "Task: Implement `_mutate`. Return a new chromosome dict with mutated genes based on self.mutation_rate. You MUST return self._sanitize_chromosome(mutated_chromo).",
+    "select_competitor": "Task: Implement `select_competitor`. Return a single competitor from the `competitors` list. Handle the edge case where all fitnesses are 0 to prevent ZeroDivisionError.",
+    "_selection": "Task: Implement `_selection`. Select a pool of competitors from self.population and pass them to select_competitor. Return the chosen competitor."
 }
 
 class MetaEvolver:
@@ -170,59 +160,54 @@ class MetaEvolver:
         return {"score": median_score, "peak_accuracy": median_peak}
 
     def _extract_method(self, source_code, method_name):
-        # We now extract based on markers rather than AST
-        start_marker = f"    # --- START LLM: EVOLUTION STRATEGY ---"
-        end_marker = f"    # --- END LLM: EVOLUTION STRATEGY ---"
-        
+        import ast
         try:
-            start_idx = source_code.find(start_marker)
-            end_idx = source_code.find(end_marker)
-            
-            if start_idx != -1 and end_idx != -1:
-                # To include the full line of the end marker
-                end_idx = source_code.find("\n", end_idx)
-                if end_idx == -1: end_idx = len(source_code)
-                else: end_idx += 1
-                
-                # To include the full line of the start marker (from the preceding newline)
-                line_start_idx = source_code.rfind("\n", 0, start_idx)
-                if line_start_idx == -1: line_start_idx = 0
-                else: line_start_idx += 1
-                
-                extracted_source = source_code[line_start_idx:end_idx]
-                
-                return extracted_source, (line_start_idx, end_idx), 4 # 4 spaces indent
-        except: pass
-        return None, None, 0
+            tree = ast.parse(source_code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == 'GeneticAlgorithm':
+                    for body_item in node.body:
+                        if isinstance(body_item, ast.FunctionDef) and body_item.name == method_name:
+                            lines = source_code.splitlines()
+                            start_line = body_item.lineno - 1
+                            end_line = body_item.end_lineno
+                            
+                            if body_item.decorator_list:
+                                start_line = body_item.decorator_list[0].lineno - 1
 
-    # # [ORIGINAL _extract_function_body — commented out 2026-05-24]
-    # def _extract_function_body(self, text, method_name):
-    #     if "```python" in text:
-    #         block = text.split("```python")[1].split("```")[0].strip()
-    #         return block
-    #     elif "```" in text:
-    #         block = text.split("```")[1].split("```")[0].strip()
-    #         return block
-    #     return text.strip()
-    # # [END ORIGINAL]
+                            char_start = sum(len(l) + 1 for l in lines[:start_line])
+                            char_end = sum(len(l) + 1 for l in lines[:end_line])
+                            extracted_source = "\n".join(lines[start_line:end_line]) + "\n"
+                            
+                            return extracted_source, (char_start, char_end), 4
+        except Exception as e:
+            print(f"[Meta] AST extraction failed: {e}")
+        return None, None, 0
 
     def _extract_function_body(self, text, method_name):
         """Extract the code block from the LLM response robustly."""
-        # --- Output Validation ---
         if any(bad in text for bad in ["import torch", "class FractalNet", "def train("]):
-            print(f"[Meta] Validation failed: LLM generated hallucinated codebase instead of GA methods.")
+            print(f"[Meta] Validation failed: LLM generated hallucinated codebase.")
             return None
             
-        if "```python" in text:
-            block = text.split("```python")[1].split("```")[0].strip()
-            return block
-        elif "```" in text:
-            parts = text.split("```")
-            if len(parts) >= 3:
-                return parts[1].strip()
-            elif len(parts) == 2:
-                return parts[1].strip()
-        
+        import re
+        blocks = re.findall(r"```python(.*?)```", text, re.DOTALL)
+        if not blocks:
+            blocks = re.findall(r"```(.*?)```", text, re.DOTALL)
+            
+        if blocks:
+            best_block = None
+            best_score = -1
+            for block in blocks:
+                block_stripped = block.strip()
+                score = 0
+                if f"def {method_name}" in block_stripped: score += 10
+                if "pass" in block_stripped or "..." in block_stripped: score -= 5
+                if len(block_stripped) > 20: score += 1
+                if score > best_score:
+                    best_score = score
+                    best_block = block_stripped
+            if best_block: return best_block
+            
         # Ultimate fallback: strip conversational text
         lines = text.strip().splitlines()
         code_lines = [l for l in lines if not l.strip().startswith(("Here", "Note", "I have", "```"))]
@@ -250,8 +235,9 @@ class MetaEvolver:
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
             search_space=SEARCH_SPACE_STR,
+            full_code=full_code,
             method_name=method_name,
-            task_specific_instructions=INSTRUCTIONS[method_name],
+            task_specific_instructions=INSTRUCTIONS.get(method_name, ""),
             code=orig_code,
             history_str=history_str
         )
@@ -473,8 +459,7 @@ if __name__ == "__main__":
     # NEW — keep trying until META_ITERATIONS *successful* evolutions are achieved
     # Priority: env var META_ATTEMPTS > model_config.json meta_attempts > default 5
     META_ITERATIONS = int(os.environ.get("META_ATTEMPTS", evolver.llm.config.get("meta_attempts", 5)))
-    # COMPONENTS = ["mutate_gene", "combine_genes", "select_competitor"]
-    COMPONENTS = ["evolution_strategy"]
+    COMPONENTS = ["combine_genes", "_crossover", "mutate_gene", "_mutate", "select_competitor", "_selection"]
 
     successes = 0
     total_attempts = 0
