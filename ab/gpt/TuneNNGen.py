@@ -1,5 +1,6 @@
 import argparse
 from typing import Literal
+import sys
 
 import torch
 from ab.gpt.util.Const import nngpt_dir, NN_TRAIN_EPOCHS
@@ -132,8 +133,12 @@ def get_pipeline_defaults():
 
 
 def _best_dtype_args():
+    """Detect the best mixed precision dtype based on hardware support."""
     bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    return {"bf16": bf16_ok, "fp16": not bf16_ok}
+    if bf16_ok:
+        return {"bf16": True}
+    else:
+        return {"fp16": True}
 
 
 def main(num_train_epochs=NUM_TRAIN_EPOCHS, lr_scheduler=LR_SCHEDULER, max_grad_norm=MAX_GRAD_NORM, test_metric=TEST_METRIC,
@@ -153,13 +158,24 @@ def main(num_train_epochs=NUM_TRAIN_EPOCHS, lr_scheduler=LR_SCHEDULER, max_grad_
          min_selected_k=15, fallback_threshold=0.35, adaptive_threshold=False,
          novelty_check=True, resume_from_cycle=None, max_retries=3, use_optimized_training=True,
          use_agents=USE_AGENTS, use_predictor=USE_PREDICTOR, use_backbone=False,
-         classification_mode=False):
+         classification_mode=False, mobile_deployment=False,
+         mobile_reval_only=False,
+         mobile_min_quantized_accuracy=None, mobile_max_duration_ms=None,
+         mobile_score_tolerance=0.99, mobile_min_valid_models=5, mobile_delegate_priority="npu,gpu,cpu"):
+
     persist_llm_conf(llm_conf, enable_merge)
-    # --- Pipeline mode intercept ---
+
     if run_iterative_pipeline:
         print("--- Initiating Iterative Fine-Tuning Pipeline ---")
-        from ab.gpt.iterative_finetune import IterativeFinetuner
-        pipeline = IterativeFinetuner(
+        try:
+            if mobile_deployment:
+                from ab.gpt.mobile_iterative_finetune import MobileDeploymentFinetuner as IterativeFinetuner
+            else:
+                from ab.gpt.iterative_finetune import IterativeFinetuner
+        except ImportError as e:
+            print(f"[ERROR] Pipeline mode requires ab.gpt.iterative_finetune: {e}")
+            sys.exit(1)
+        pipeline_kwargs = dict(
             llm_conf=llm_conf,
             cycles=cycles,
             models_per_cycle=models_per_cycle,
@@ -174,6 +190,23 @@ def main(num_train_epochs=NUM_TRAIN_EPOCHS, lr_scheduler=LR_SCHEDULER, max_grad_
             use_optimized_training=use_optimized_training,
             num_train_epochs=num_train_epochs,
         )
+        if mobile_deployment:
+            pipeline_kwargs["mobile_min_quantized_accuracy"] = mobile_min_quantized_accuracy
+            pipeline_kwargs["mobile_max_duration_ms"] = mobile_max_duration_ms
+            pipeline_kwargs["mobile_score_tolerance"] = mobile_score_tolerance
+            pipeline_kwargs["mobile_min_valid_models"] = mobile_min_valid_models
+            pipeline_kwargs["mobile_delegate_priority"] = mobile_delegate_priority
+            if mobile_reval_only:
+                pipeline_kwargs["skip_mobile_seed_prep"] = True
+        pipeline = IterativeFinetuner(**pipeline_kwargs)
+        if mobile_deployment and mobile_reval_only:
+            cycle = resume_from_cycle or 1
+            result = pipeline.run_mobile_reval_cycle(cycle, clean=True)
+            if not result.get("success", False):
+                print(f"[ERROR] Mobile re-eval failed for cycle {cycle}: {result.get('error')}")
+                sys.exit(1)
+            print(f"Mobile re-eval cycle {cycle} complete.")
+            return
         pipeline.run()
         return  # Skip standalone training
 
@@ -182,16 +215,24 @@ def main(num_train_epochs=NUM_TRAIN_EPOCHS, lr_scheduler=LR_SCHEDULER, max_grad_
         try:
             import unsloth
             UNSLOTH_AVAILABLE = True
-        except:
-            pass
+        except ImportError:
+            print("[WARN] Unsloth requested but not installed. Falling back to standard PEFT.")
 
     from peft import LoraConfig
     from transformers import TrainingArguments
 
     if onnx_run:
-        from ab.gpt.util.Tune_Onnx import tune, ds_conf
+        try:
+            from ab.gpt.util.Tune_Onnx import tune, ds_conf
+        except ImportError as e:
+            print(f"[ERROR] ONNX mode requires ab.gpt.util.Tune_Onnx: {e}")
+            sys.exit(1)
     else:
-        from ab.gpt.util.Tune import tune, ds_conf
+        try:
+            from ab.gpt.util.Tune import tune, ds_conf
+        except ImportError as e:
+            print(f"[ERROR] Failed to import ab.gpt.util.Tune: {e}")
+            sys.exit(1)
 
     print(f'''All hyperparameters:
 num_train_epochs={num_train_epochs}, lr_scheduler={lr_scheduler}, max_grad_norm={max_grad_norm}, tune_layers={tune_layers}, test_metric={test_metric},
@@ -201,7 +242,8 @@ llm_conf={llm_conf}, test_nn={test_nn}, nn_train_epochs={nn_train_epochs}, peft=
 per_device_train_batch_size={per_device_train_batch_size}, gradient_accumulation_steps={gradient_accumulation_steps}, warmup_ratio={warmup_ratio},
 logging_steps={logging_steps}, optimizer={optimizer}, max_prompts={max_prompts}, save_llm_output={save_llm_output}, max_new_tokens={max_new_tokens},
 use_deepspeed={use_deepspeed}, nn_name_prefix={nn_name_prefix}, temperature={temperature}, top_k={top_k}, top_p={top_p}, onnx_run={onnx_run},
-unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch}, use_agents={use_agents}, use_predictor={use_predictor}''')
+unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch}, use_agents={use_agents}, use_predictor={use_predictor},
+use_backbone={use_backbone}, enable_merge={enable_merge}, classification_mode={classification_mode}''')
 
     test_prm = {
         'metric_for_best_model': test_metric,
@@ -226,7 +268,6 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
             'per_device_train_batch_size': per_device_train_batch_size,
             'gradient_accumulation_steps': gradient_accumulation_steps,
             'learning_rate': learning_rate,
-            'bf16': True,  # Use bf16 to match Unsloth's bfloat16 compute dtype
             'logging_steps': logging_steps,
             'output_dir': nngpt_dir / 'outputs',
             'optim': optimizer,
@@ -273,7 +314,6 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
             'gradient_accumulation_steps': gradient_accumulation_steps,
             'warmup_ratio': warmup_ratio,
             'learning_rate': learning_rate,
-            'bf16': True,  # Use bf16 to match Unsloth's bfloat16 compute dtype
             'logging_steps': logging_steps,
             'output_dir': nngpt_dir / 'outputs',
             'optim': optimizer,
@@ -285,12 +325,13 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
 
     # Create TrainingArguments with all parameters at once
     training_args = TrainingArguments(**training_kwargs)
+    # FIX: Ensure int types for LoRA config
     peft_config = LoraConfig(
-        r=r,
-        lora_alpha=lora_alpha,
+        r=int(r),
+        lora_alpha=int(lora_alpha),
         target_modules=target_modules,
         layers_to_transform=list(tune_layers),
-        lora_dropout=lora_dropout,
+        lora_dropout=float(lora_dropout),
         bias=bias,
         task_type=task_type)
 
@@ -311,20 +352,6 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
     except Exception as e:
         print(f"[WARN] peft_config validation warning: {e}")
 
-    print(f"\n[DEBUG] === TUNENNGEN MAIN START ===")
-    print(f"[DEBUG] llm_conf: {llm_conf}")
-    print(f"[DEBUG] enable_merge: {enable_merge}")
-    print(f"[DEBUG] nngpt_dir: {nngpt_dir}")
-
-    # Show what was written to config
-    run_config_path = out_dir / 'nngpt' / 'run_config.json'
-    if run_config_path.exists():
-        with open(run_config_path) as f:
-            cfg = json.load(f)
-        print(f"[CONFIG] run_config.json current state:")
-        print(f"[CONFIG]   base_model_name: {cfg.get('base_model_name')}")
-        print(f"[CONFIG]   enable_merge: {cfg.get('enable_merge')}")
-    print(f"[DEBUG] === ===\n")
     try:
         tune(
             test_nn, nn_train_epochs, skip_epoches, peft,
@@ -337,29 +364,27 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
+            test_metric=test_metric,
             onnx_run=onnx_run,
             trans_mode=trans_mode,
             prompt_batch=prompt_batch,
             use_agents=use_agents,
             use_predictor=use_predictor,
-            enable_merge=enable_merge,
             use_unsloth=unsloth_opt,
+            enable_merge=enable_merge,
             classification_mode=classification_mode,
+            use_backbone=use_backbone,
         )
 
         # Normal completion - auto merge best
         if enable_merge:
-            print("\n[DEBUG] === NORMAL COMPLETION MERGE ===")
-            print(f"[DEBUG] enable_merge is True")
-            print(f"[DEBUG] About to import Merge module")
             print("\n[MERGE] Training complete - running auto merge...\n")
             try:
-                print(f"[DEBUG] Importing from ab.gpt.util.Merge")
                 from ab.gpt.util.MergeLLM import rebuild_from_lineage
-                print(f"[DEBUG] ✓ Import successful")
-                print(f"[DEBUG] Calling rebuild_from_lineage()")
                 rebuild_from_lineage()
-                print(f"[DEBUG] ✓ rebuild_from_lineage() completed")
+                print("[MERGE] Completed successfully.\n")
+            except ImportError as e:
+                print(f"[WARN] MergeLLM module not found: {e}")
             except Exception as e:
                 print(f"[MERGE] Auto merge failed: {e}")
                 import traceback
@@ -371,21 +396,19 @@ unsloth_opt={unsloth_opt}, trans_mode={trans_mode}, prompt_batch={prompt_batch},
     finally:
         # Interrupted case - still try to merge best from available epochs
         if enable_merge:
-            print("\n[DEBUG] === FINALLY BLOCK MERGE ===")
-            print(f"[DEBUG] enable_merge is True in finally block")
             print("\n[MERGE] Running emergency merge (interrupted)...\n")
             try:
-                print(f"[DEBUG] Importing from ab.gpt.util.Merge in finally")
                 from ab.gpt.util.MergeLLM import rebuild_from_lineage
-                print(f"[DEBUG] ✓ Import successful in finally")
-                print(f"[DEBUG] Calling rebuild_from_lineage() from finally")
                 rebuild_from_lineage()
-                print(f"[DEBUG] ✓ rebuild_from_lineage() completed in finally")
+                print("[MERGE] Emergency merge completed.\n")
+            except ImportError as e:
+                print(f"[WARN] MergeLLM module not found: {e}")
             except Exception as e:
                 print(f"[MERGE] Emergency merge failed: {e}")
                 import traceback
                 traceback.print_exc()
 
+    print("\n" + "=" * 70)
     print("FINE-TUNING CONFIGURATION SUMMARY")
     print("=" * 70)
     print(f"✓ LoRA: r={r}, alpha={lora_alpha}, dropout={lora_dropout}, target={target_modules}")
@@ -558,10 +581,30 @@ if __name__ == '__main__':
     parser.add_argument("--enable_merge", action="store_true", default=False, help="Enable automatic merge decision after fine-tuning.")
     parser.add_argument('--prompt_batch', type=int, default=PROMPT_BATCH,
                         help=f"Prompt batch size (default: {PROMPT_BATCH}).")
-    parser.add_argument('--use_agents', action='store_false', default=USE_AGENTS,
+    parser.add_argument('--use_agents', action='store_true', default=USE_AGENTS,
                         help='Enable LangGraph multi-agent workflow (default: False).')
+    parser.add_argument('--no-use_agents', dest='use_agents', action='store_false',
+                        help='Disable LangGraph multi-agent workflow during fine-tuning.')
     parser.add_argument('--use_predictor', action='store_true', default=USE_PREDICTOR,
-                        help='Enable predictor agent (requires --use_agents) (default: False).')
+                        help='Enable predictor agent.')
+    parser.add_argument('--use_backbone', action='store_true', default=False,
+                        help='Use backbone mode for code generation (default: False).')
+    parser.add_argument('--classification_mode', action='store_true', default=False,
+                        help='Enable classification-only mode (default: False).')
+    parser.add_argument('--mobile_deployment', action='store_true', default=False,
+                        help='Enable standalone mobile deployment pipeline extensions (default: False).')
+    parser.add_argument('--mobile_reval_only', action='store_true', default=False,
+                        help='[Mobile Pipeline] Re-run GPU eval + mobile for one cycle only (requires --mobile_deployment).')
+    parser.add_argument('--mobile_min_quantized_accuracy', type=float, default=None,
+                        help='[Mobile Pipeline] Minimum quantized accuracy required for selection (default: None).')
+    parser.add_argument('--mobile_max_duration_ms', type=float, default=None,
+                        help='[Mobile Pipeline] Maximum on-device duration (ms) allowed for selection (default: None).')
+    parser.add_argument('--mobile_score_tolerance', type=float, default=0.99,
+                        help='[Mobile Pipeline] Non-regression tolerance multiplier for cycle gate (default: 0.99).')
+    parser.add_argument('--mobile_min_valid_models', type=int, default=5,
+                        help='[Mobile Pipeline] Minimum valid mobile-scored models required to accept cycle (default: 5).')
+    parser.add_argument('--mobile_delegate_priority', type=str, default='npu,gpu,cpu',
+                        help='[Mobile Pipeline] Tie-break delegate priority for equal scores (default: npu,gpu,cpu).')
 
     args = parser.parse_args()
 
