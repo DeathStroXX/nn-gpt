@@ -5,6 +5,6 @@
     "use_deepspeed": false,
     "token_from_file": false,
     "only_best_accuracy": false,
-    "context_length": 4096,
+    "context_length": 8192,
     "meta_attempts": 20
 }

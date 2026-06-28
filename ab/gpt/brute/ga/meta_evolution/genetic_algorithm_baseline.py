@@ -12,6 +12,7 @@ class GeneticAlgorithm:
         self.elitism_count = elitism_count
         self.mutation_rate = mutation_rate
         self.population = []
+        self.archive = {}  # MAP-Elites behavioral archive mapping (n_blocks, base_channels) to incumbent
         self.checkpoint_path = checkpoint_path
 
     def _create_random_chromosome(self):
@@ -43,7 +44,7 @@ class GeneticAlgorithm:
         self.population = [{'chromosome': self._create_random_chromosome(), 'fitness': None} for _ in range(self.population_size)]
 
     def _save_checkpoint(self, generation_num):
-        state = {'generation': generation_num, 'population': self.population}
+        state = {'generation': generation_num, 'population': self.population, 'archive': self.archive}
         with open(self.checkpoint_path, 'wb') as f: pickle.dump(state, f)
 
     def _load_checkpoint(self):
@@ -52,79 +53,43 @@ class GeneticAlgorithm:
                 with open(self.checkpoint_path, 'rb') as f:
                     state = pickle.load(f)
                 population = state['population']
+                self.archive = state.get('archive', {})
                 for individual in population:
                     individual['chromosome'] = self._sanitize_chromosome(individual['chromosome'])
                 return state['generation'], population
             except: pass
         return 0, None
 
-    # --- START LLM: CROSSOVER ---
-    def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
-        """
-        Decide which parent's gene to use for a child chromosome.
-        Returns the chosen gene value.
-        """
-        if parent1_value == parent2_value:
-            return parent1_value
-        if gene_name in ['lr', 'momentum']:
-            return parent1_value if parent1_value > parent2_value else parent2_value
-        elif gene_name in ['n_columns', 'base_channels', 'dropout_prob', 'nn_blocks']:
-            return random.choice([parent1_value, parent2_value])
-        else:
-            return parent1_value if gene_index < crossover_point else parent2_value
-
+    # --- START DUMB BASELINE: CROSSOVER ---
     def _crossover(self, parent1_chromo, parent2_chromo):
         child_chromo = {}
         genes = list(self.search_space.keys())
         point = random.randint(1, len(genes) - 1)
         for i, gene in enumerate(genes):
-            child_chromo[gene] = self._coerce_gene_value(
-                gene,
-                self.combine_genes(
-                gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes)
-                ),
-            )
-        return self._sanitize_chromosome(child_chromo)
-    # --- END LLM: CROSSOVER ---
-
-    # --- START LLM: MUTATION ---
-    def mutate_gene(self, current_value, possible_values):
-        if not isinstance(possible_values, list):
-            raise ValueError('possible_values should be a list')
-        if not possible_values:
-            return current_value
-        import random
-        new_value = random.choice(possible_values)
-        if isinstance(current_value, (int, float, np.integer, np.floating)):
-            if new_value == current_value:
-                new_value += random.choice([-1, 1])
+            if i < point:
+                child_chromo[gene] = parent1_chromo[gene]
             else:
-                new_value += random.choice([-0.1, 0.1])
-        return new_value
+                child_chromo[gene] = parent2_chromo[gene]
+        return child_chromo
+    # --- END DUMB BASELINE: CROSSOVER ---
+
+    # --- START DUMB BASELINE: MUTATION ---
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
         for gene in self.search_space.keys():
             if random.random() < self.mutation_rate:
                 possibles = [v for v in self.search_space[gene] if v != mutated_chromo[gene]]
                 if possibles:
-                    mutated_chromo[gene] = self._coerce_gene_value(
-                        gene,
-                        self.mutate_gene(mutated_chromo[gene], possibles)
-                    )
-        return self._sanitize_chromosome(mutated_chromo)
-    # --- END LLM: MUTATION ---
+                    mutated_chromo[gene] = random.choice(possibles)
+        return mutated_chromo
+    # --- END DUMB BASELINE: MUTATION ---
 
-    # --- START LLM: SELECTION ---
-    def select_competitor(self, competitors):
-        total_fitness = sum((x['fitness'] if x['fitness'] is not None else 0 for x in competitors))
-        probabilities = [(x['fitness'] if x['fitness'] is not None else 0) / total_fitness for x in competitors]
-        return random.choices(competitors, probabilities, k=1)[0]
-
+    # --- START DUMB BASELINE: SELECTION ---
     def _selection(self):
         k = 3
         competitors = random.sample(self.population, min(k, len(self.population)))
-        return self.select_competitor(competitors)
-    # --- END LLM: SELECTION ---
+        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -1)
+    # --- END DUMB BASELINE: SELECTION ---
 
     def run(self, num_generations, fitness_function):
         start_gen, loaded_population = self._load_checkpoint()
@@ -142,6 +107,12 @@ class GeneticAlgorithm:
                 if ind['fitness'] is None:
                     print(f"  Evaluating Individual {i+1}/{len(self.population)} ---- Generation: {gen+1}/{num_generations}")
                     ind['fitness'] = fitness_function(ind['chromosome'])
+                
+                # MAP-Elites Archive Update
+                cell = (ind['chromosome'].get('n_blocks', 1), ind['chromosome'].get('base_channels', 16))
+                if cell not in self.archive or ind['fitness'] > self.archive[cell]['fitness']:
+                    self.archive[cell] = copy.deepcopy(ind)
+                    print(f"  [Archive] Cell {cell} updated with fitness: {ind['fitness']:.4f}")
             
             # Sort
             self.population.sort(key=lambda x: x['fitness'] if x['fitness'] is not None else -1, reverse=True)

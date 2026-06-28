@@ -8,11 +8,13 @@ import shutil
 import time
 import json
 import sys
+import gc
+import torch
 from datetime import datetime
 
 from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader 
 from ab.gpt.brute.ga.meta_evolution.rl_rewards import calculate_meta_reward
-from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable import SEARCH_SPACE
+from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TARGET_FILE = os.path.join(BASE_DIR, "genetic_algorithm.py")
@@ -50,6 +52,10 @@ Your generated code will be AUTOMATICALLY INJECTED into a production Python clas
 Your objective is NOT just to produce a "good" algorithm in the abstract. You must propose crossover and mutation strategies that will theoretically expand the frontier of what the GA has seen:
 1. Break the Global SOTA peak accuracy.
 2. Discover novel, high-performing architectures to populate empty cells in the MAP-Elites Behavioral Archive.
+
+### VITAL CONTEXT ###
+- 1-EPOCH SPEEDRUN: To save compute, every generated architecture is evaluated by training for exactly 1 epoch (782 batches). Your operators must prioritize architectures and hyperparameter combinations that favor extreme fast-convergence.
+- ACTIVE STOCHASTIC DEPTH: The Search Space enforces active FractalDropPath (`dropout_prob` > 0.0). Focus on evolutionary operators that favor robust architectures capable of surviving heavy path-dropping during the short 1-epoch evaluation.
 
 ### HARD CONSTRAINTS (CRITICAL) ###
 1. NO INVENTED VALUES: Genes are strictly discrete. You MUST ONLY select values from the provided `SEARCH_SPACE` or the `possible_values` list. NEVER use arithmetic (e.g., `val + 0.1`, `val * 2`, `random.uniform()`) to create new gene values.
@@ -126,6 +132,14 @@ class MetaEvolver:
         self.success_buffer = []
         self.attempt_history = []
 
+    def _cuda_cleanup(self):
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, 'ipc_collect'):
+                torch.cuda.ipc_collect()
+        print("[Meta] GPU cleanup attempted (gc + empty_cache)")
+
     def run_benchmark(self):
         import statistics
         # Removed --clean to persist the GA archive and population across LLM attempts
@@ -133,7 +147,7 @@ class MetaEvolver:
         env = os.environ.copy()
         env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
-        runs = 3
+        runs = 1
         scores = []
         peak_accs = []
         
@@ -176,6 +190,12 @@ class MetaEvolver:
         median_top3 = statistics.median(scores) if scores else 0.0
         median_peak = statistics.median(peak_accs) if peak_accs else 0.0
         print(f"[Meta] Median Top-3 Quality over {runs} runs: {median_top3:.4f}")
+        
+        # Cleanup large objects explicitly
+        scores.clear()
+        peak_accs.clear()
+        self._cuda_cleanup()
+        
         return {"top3_mean": median_top3, "peak_accuracy": median_peak, "archive_size": archive_size}
 
     def _extract_method(self, source_code, method_name):
@@ -386,6 +406,11 @@ class MetaEvolver:
         adapter_save_start_time = None
         adapter_save_end_time = None
         
+        fine_tune_requested_batch = 0
+        fine_tune_actual_batch = 0
+        fine_tune_retries = 0
+        fine_tune_oom_message = None
+        
         if valid_syntax and reward > 0:
             print("--> SUCCESS. Updating Baseline (EMA) & Fine-tuning on Success.")
             # EMA Update: 20% of the new score, 80% of the old baseline
@@ -405,24 +430,62 @@ class MetaEvolver:
             if len(self.success_buffer) > 20:
                 self.success_buffer.pop(0)
 
-        # Sample a batch
-        batch_size = min(4, len(self.success_buffer))
-        training_batch = random.sample(self.success_buffer, batch_size)
-        train_examples_count = batch_size
-        
-        print(f"[LoRA] Fine-tune start (replay buffer: {len(self.success_buffer)} items, batch: {batch_size})")
-        fine_tune_started = True
-        fine_tune_start_time = datetime.now().isoformat()
+        # Setup fallback batch sizes
         try:
-            self.llm.train_on_buffer(training_batch, epochs=train_epochs)
-            fine_tune_completed = True
-            print("[LoRA] Fine-tune complete")
-        except Exception as e:
+            target_batch = int(os.environ.get("LORA_REPLAY_BATCH_SIZE", 4))
+            fallbacks_str = os.environ.get("LORA_REPLAY_BATCH_FALLBACKS", "2,1")
+            fallbacks = [int(x.strip()) for x in fallbacks_str.split(",") if x.strip()]
+        except ValueError:
+            target_batch = 4
+            fallbacks = [2, 1]
+            
+        batch_sizes_to_try = [target_batch] + fallbacks
+        fine_tune_requested_batch = min(target_batch, len(self.success_buffer))
+        
+        self._cuda_cleanup()  # Explicit pre-fine-tune cleanup
+
+        for attempt_batch in batch_sizes_to_try:
+            batch_size = min(attempt_batch, len(self.success_buffer))
+            if batch_size <= 0:
+                continue
+                
+            training_batch = random.sample(self.success_buffer, batch_size)
+            train_examples_count = batch_size
+            fine_tune_actual_batch = batch_size
+            
+            print(f"[LoRA] Fine-tune start (replay buffer: {len(self.success_buffer)} items, batch: {batch_size})")
+            fine_tune_started = True
+            fine_tune_start_time = datetime.now().isoformat()
+            try:
+                self.llm.train_on_buffer(training_batch, epochs=train_epochs)
+                fine_tune_completed = True
+                print("[LoRA] Fine-tune complete")
+                break  # Success, exit the retry loop
+            except RuntimeError as e:
+                err_str = str(e).lower()
+                if "cuda out of memory" in err_str or "cuda runtime error" in err_str:
+                    fine_tune_oom_message = str(e)
+                    print(f"[LoRA] CUDA OOM at batch size {batch_size}: {e}")
+                    self._cuda_cleanup()
+                    fine_tune_retries += 1
+                    continue # Try next smaller batch
+                else:
+                    fine_tune_failed = True
+                    fine_tune_exception = str(e)
+                    print(f"[LoRA] Fine-tune failed (non-OOM RuntimeError): {e}")
+                    break
+            except Exception as e:
+                fine_tune_failed = True
+                fine_tune_exception = str(e)
+                print(f"[LoRA] Fine-tune failed: {e}")
+                break
+            finally:
+                fine_tune_end_time = datetime.now().isoformat()
+                
+        if not fine_tune_completed and not fine_tune_failed and fine_tune_started:
             fine_tune_failed = True
-            fine_tune_exception = str(e)
-            print(f"[LoRA] Fine-tune failed: {e}")
-        finally:
-            fine_tune_end_time = datetime.now().isoformat()
+            fine_tune_exception = "CUDA OOM exhausted all batch fallbacks"
+            print(f"[LoRA] Skipping fine-tuning for this iteration due to persistent OOM.")
             
         if fine_tune_completed:
             print("[LoRA] Adapter save start")
@@ -442,6 +505,11 @@ class MetaEvolver:
         if 'bkp' in locals() and not (valid_syntax and reward > 0):
             print("--> Reverting File.")
             shutil.copy(bkp, TARGET_FILE)
+        elif valid_syntax and reward > 0:
+            target_filename = os.path.basename(TARGET_FILE)
+            ts_bkp = os.path.join(BACKUP_DIR, f"{target_filename}_attempt{attempt}_{RUN_TIMESTAMP}_{method_name}.py")
+            shutil.copy(TARGET_FILE, ts_bkp)
+            print(f"--> Saved timestamped version history: {ts_bkp}")
             
         # Log attempt history
         status = "Success" if (valid_syntax and reward > 0) else ("Syntax Error" if not valid_syntax else "Regression")
@@ -471,6 +539,10 @@ class MetaEvolver:
             "adapter_path": adapter_path,
             "train_examples_count": train_examples_count,
             "train_epochs": train_epochs,
+            "fine_tune_requested_batch": fine_tune_requested_batch,
+            "fine_tune_actual_batch": fine_tune_actual_batch,
+            "fine_tune_retries": fine_tune_retries,
+            "fine_tune_oom_message": fine_tune_oom_message,
             "fine_tune_start_time": fine_tune_start_time,
             "fine_tune_end_time": fine_tune_end_time,
             "adapter_save_start_time": adapter_save_start_time,
@@ -504,18 +576,33 @@ if __name__ == "__main__":
 
     successes = 0
     total_attempts = 0
-    print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry on failure)")
-    while successes < META_ITERATIONS:
+    component_index = 0
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 5
+    MAX_TOTAL_ATTEMPTS = META_ITERATIONS * 10
+
+    print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry up to {MAX_CONSECUTIVE_FAILURES} times per component)")
+    while successes < META_ITERATIONS and total_attempts < MAX_TOTAL_ATTEMPTS:
         total_attempts += 1
-        component = COMPONENTS[(total_attempts - 1) % len(COMPONENTS)]
+        component = COMPONENTS[component_index]
         print(f"\n=== Attempt {total_attempts} | Successes: {successes}/{META_ITERATIONS} — Evolving: {component} ===")
         success = evolver.evolve_component(component, attempt=total_attempts, total_attempts=META_ITERATIONS)
         if success:
             successes += 1
+            consecutive_failures = 0 # reset failures on success
+            component_index = (component_index + 1) % len(COMPONENTS) # move to next component
             print(f"[Meta] ✓ Success #{successes}/{META_ITERATIONS} achieved on attempt {total_attempts}")
         else:
-            print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (successes so far: {successes}/{META_ITERATIONS})")
+            consecutive_failures += 1
+            print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}, successes so far: {successes}/{META_ITERATIONS})")
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"[Meta] ⚠️ Reached max consecutive failures ({MAX_CONSECUTIVE_FAILURES}) for {component}. Skipping to next component.")
+                consecutive_failures = 0
+                component_index = (component_index + 1) % len(COMPONENTS)
         time.sleep(2)
+        
+    if total_attempts >= MAX_TOTAL_ATTEMPTS:
+        print(f"\n[Meta] ⚠️ Reached absolute maximum attempts limit ({MAX_TOTAL_ATTEMPTS}). Halting.")
     print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions in {total_attempts} total attempts ===")
     
     # --- Generate visualizations after all iterations ---

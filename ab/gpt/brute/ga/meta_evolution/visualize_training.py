@@ -25,12 +25,14 @@ import json
 import warnings
 import glob
 import re
+import sys
 from datetime import datetime
 
 import matplotlib
 matplotlib.use("Agg")   # headless — no display needed
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -43,17 +45,29 @@ VIZ_ROOT       = os.path.join(BASE_DIR, "visualizations")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+# PLOT_STYLE = {
+#     "figure.facecolor": "#0f1117",
+#     "axes.facecolor":   "#1a1d2e",
+#     "axes.edgecolor":   "#3a3f5c",
+#     "axes.labelcolor":  "#e0e0e0",
+#     "xtick.color":      "#b0b0b0",
+#     "ytick.color":      "#b0b0b0",
+#     "text.color":       "#e0e0e0",
+#     "grid.color":       "#2a2d3e",
+#     "legend.facecolor": "#1a1d2e",
+#     "legend.edgecolor": "#3a3f5c",
+# }
 PLOT_STYLE = {
-    "figure.facecolor": "#0f1117",
-    "axes.facecolor":   "#1a1d2e",
-    "axes.edgecolor":   "#3a3f5c",
-    "axes.labelcolor":  "#e0e0e0",
-    "xtick.color":      "#b0b0b0",
-    "ytick.color":      "#b0b0b0",
-    "text.color":       "#e0e0e0",
-    "grid.color":       "#2a2d3e",
-    "legend.facecolor": "#1a1d2e",
-    "legend.edgecolor": "#3a3f5c",
+    "figure.facecolor": "white",
+    "axes.facecolor":   "white",
+    "axes.edgecolor":   "black",
+    "axes.labelcolor":  "black",
+    "xtick.color":      "black",
+    "ytick.color":      "black",
+    "text.color":       "black",
+    "grid.color":       "gray",
+    "legend.facecolor": "white",
+    "legend.edgecolor": "black",
 }
 
 ACCENT1 = "#7c83fd"   # blue-purple
@@ -67,13 +81,16 @@ def _apply_style(ax, title, xlabel, ylabel):
     ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
     ax.set_xlabel(xlabel, fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
-    ax.grid(True, linestyle="--", alpha=0.4)
-    ax.tick_params(colors="#b0b0b0")
+    # ax.grid(True, linestyle="--", alpha=0.4)
+    # ax.tick_params(colors="#b0b0b0")
+    ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
+    ax.tick_params(colors="black")
 
 
 def _save(fig, path, saved_files):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    # fig.savefig(path, dpi=150, bbox_inches="tight")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor='white', transparent=False)
     plt.close(fig)
     saved_files.append(path)
     print(f"  [saved] {os.path.relpath(path, BASE_DIR)}")
@@ -82,11 +99,14 @@ def _save(fig, path, saved_files):
 def _warn(msg):
     print(f"  [WARN]  {msg}")
 
-def _extract_log_timestamp():
+def _extract_log_timestamp(target_ts=None):
     """
     Extract the experiment timestamp from source log filenames.
-    Priority: ga_evaluations > LLM-evolution-logs > pod log > fallback to now().
+    Priority: target_ts > ga_evaluations > LLM-evolution-logs > pod log > fallback to now().
     """
+    if target_ts:
+        return target_ts
+
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
     
     # Priority order of log file patterns to check
@@ -115,20 +135,27 @@ def _extract_log_timestamp():
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_stats_records():
+def load_stats_records(target_ts=None):
     """
-    Read the latest ga_evaluations*.jsonl to get exact chronological evaluation order for the current run.
+    Read the ga_evaluations*.jsonl to get exact chronological evaluation order for the current run.
     """
     records = []
-    log_files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations*.jsonl"))
+    if target_ts:
+        log_files = [
+            os.path.join(LOGS_DIR, f"ga_evaluations_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, f"ga_evaluations_{target_ts}.jsonl")
+        ]
+        log_files = [f for f in log_files if os.path.exists(f)]
+    else:
+        log_files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations*.jsonl"))
+        if not log_files:
+            log_files = glob.glob(os.path.join(BASE_DIR, "ga_evaluations*.jsonl"))
+            
     if not log_files:
-        # Fallback to base dir for older logs
-        log_files = glob.glob(os.path.join(BASE_DIR, "ga_evaluations*.jsonl"))
-    if not log_files:
-        _warn("No ga_evaluations*.jsonl files found")
+        _warn(f"No ga_evaluations{'* ' if not target_ts else '_'+target_ts}.jsonl files found")
         return records
         
-    latest_log = max(log_files, key=os.path.getmtime)
+    latest_log = log_files[0] if target_ts else max(log_files, key=os.path.getmtime)
     print(f"  [Info] Loading GA eval logs from: {os.path.basename(latest_log)}")
     
     with open(latest_log) as f:
@@ -137,35 +164,47 @@ def load_stats_records():
             if not line: continue
             try:
                 data = json.loads(line)
-                # the log saves percentage (e.g. 65.4), but old code multiplied by 100
-                # so we divide by 100 here to be compatible with other plot functions
-                acc = data.get("accuracy", 0) / 100.0 
-                records.append({
-                    "uid": data.get("uid"),
-                    "accuracy": acc,
-                    "best_accuracy": acc,  # For compatibility with best_vs_avg plot
-                    "is_cached": data.get("is_cached", False)
-                })
+                records.append(data)
             except Exception as e:
                 _warn(f"Could not read line {i+1} in {latest_log}: {e}")
 
     return records
 
 
-def load_llm_logs():
+def split_into_generations(entries, gen1_size=20, rest_size=15):
+    generations = []
+    if not entries: return generations
+    # Generation 1
+    generations.append(entries[:gen1_size])
+    idx = gen1_size
+    # Remaining generations
+    while idx < len(entries):
+        generations.append(entries[idx:idx + rest_size])
+        idx += rest_size
+    return generations
+
+
+def load_llm_logs(target_ts=None):
     """
-    Read the latest LLM-evolution-logs*.jsonl. Returns list of dicts.
+    Read the LLM-evolution-logs*.jsonl. Returns list of dicts.
     Expected fields: method, score, reward, valid_syntax, timestamp.
     """
-    log_files = glob.glob(os.path.join(LOGS_DIR, "LLM-evolution-logs*.jsonl"))
+    if target_ts:
+        log_files = [
+            os.path.join(LOGS_DIR, f"LLM-evolution-logs_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, f"LLM-evolution-logs_{target_ts}.jsonl")
+        ]
+        log_files = [f for f in log_files if os.path.exists(f)]
+    else:
+        log_files = glob.glob(os.path.join(LOGS_DIR, "LLM-evolution-logs*.jsonl"))
+        if not log_files:
+            log_files = glob.glob(os.path.join(BASE_DIR, "LLM-evolution-logs*.jsonl"))
+            
     if not log_files:
-        # Fallback to base dir for older logs
-        log_files = glob.glob(os.path.join(BASE_DIR, "LLM-evolution-logs*.jsonl"))
-    if not log_files:
-        _warn("No LLM-evolution-logs*.jsonl files found")
+        _warn(f"No LLM-evolution-logs{'* ' if not target_ts else '_'+target_ts}.jsonl files found")
         return []
         
-    latest_log = max(log_files, key=os.path.getmtime)
+    latest_log = log_files[0] if target_ts else max(log_files, key=os.path.getmtime)
     print(f"  [Info] Loading LLM logs from: {os.path.basename(latest_log)}")
     
     entries = []
@@ -189,41 +228,59 @@ def plot_generation_accuracy(records, out_dir, saved_files):
     if not records:
         _warn("No stats records found — skipping generation_accuracy.png")
         return
-
-    x = list(range(1, len(records) + 1))
-    acc = [r["accuracy"] * 100 if r["accuracy"] is not None else None for r in records]
-    is_cached = [r.get("is_cached", False) for r in records]
-
-    # Split points into new vs cached
-    x_new, y_new = [], []
-    x_cached, y_cached = [], []
+        
+    generations = split_into_generations(records, 20, 15)
+    gen_numbers, avg_accuracies, peak_accuracies, running_peaks = [], [], [], []
+    running_peak = 0.0
     
-    for xi, yi, cached in zip(x, acc, is_cached):
-        if yi is not None:
-            if cached:
-                x_cached.append(xi)
-                y_cached.append(yi)
-            else:
-                x_new.append(xi)
-                y_new.append(yi)
+    for i, gen in enumerate(generations):
+        gen_num = i + 1
+        accuracies = [e.get("accuracy", 0) for e in gen]
+        if not accuracies: continue
+        avg_acc = np.mean(accuracies)
+        peak_acc = max(accuracies)
+        running_peak = max(running_peak, peak_acc)
+        
+        gen_numbers.append(gen_num)
+        avg_accuracies.append(avg_acc)
+        peak_accuracies.append(peak_acc)
+        running_peaks.append(running_peak)
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(10, 5))
+        fig, ax = plt.subplots(figsize=(14, 7))
+        ax.plot(gen_numbers, avg_accuracies, label="Average Accuracy (per gen)",
+                color="#3b82f6", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
+        ax.plot(gen_numbers, peak_accuracies, label="Peak Accuracy (per gen)",
+                color="#f97316", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
+        ax.plot(gen_numbers, running_peaks, label="Running Best (cumulative)",
+                color="#10b981", linewidth=2.5, linestyle="--")
+
+        ax.set_xlabel("Generation", fontsize=13)
+        ax.set_ylabel("Accuracy (%)", fontsize=13)
+        ax.set_title("LLM-Guided GA: Accuracy per Generation (No Fractal Drop Path)", fontsize=15, fontweight="bold")
+        ax.legend(fontsize=11, loc="lower right")
         
-        # Draw a faint continuous line connecting all evaluations chronologically
-        ax.plot(x, acc, color="#ffffff", alpha=0.2, linewidth=1, zorder=1)
+        # Override grid and ticks to exactly match baseline visual appeal
+        ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
+        ax.tick_params(colors="black")
         
-        # Scatter plot for newly evaluated models
-        if x_new:
-            ax.scatter(x_new, y_new, color=ACCENT1, s=40, label="New Evaluation", zorder=3, edgecolors="white", linewidths=0.5)
+        if generations:
+            ax.set_xlim(1, len(generations))
+            ax.set_xticks(np.arange(0, len(generations) + 1, 20))
             
-        # Scatter plot for cached duplicates
-        if x_cached:
-            ax.scatter(x_cached, y_cached, color="#5a6a7a", s=30, label="Cached Duplicate", zorder=2, alpha=0.6)
-            
-        _apply_style(ax, "Model Accuracy Over Evaluation Order", "Evaluation Index", "Accuracy (%)")
-        ax.legend()
-        _save(fig, os.path.join(out_dir, "generation_accuracy.png"), saved_files)
+        ax.set_yticks(np.arange(30, 101, 10))
+        ax.set_ylim(bottom=30)
+
+        if running_peaks:
+            ax.annotate(f"{running_peaks[-1]:.2f}%",
+                        xy=(gen_numbers[-1], running_peaks[-1]),
+                        xytext=(-60, 15), textcoords="offset points",
+                        fontsize=11, fontweight="bold", color="#10b981",
+                        arrowprops=dict(arrowstyle="->", color="#10b981"))
+                        
+        plt.tight_layout()
+        path = os.path.join(out_dir, "generation_accuracy.png")
+        _save(fig, path, saved_files)
 
 
 def plot_population_diversity(records, out_dir, saved_files):
@@ -238,15 +295,23 @@ def plot_population_diversity(records, out_dir, saved_files):
 
     # Group into batches to simulate generation-level diversity
     batch_size = int(os.environ.get("POPULATION_SIZE", 20))
+    elites = 5  # Elites are carried forward and not re-evaluated
     batches, labels = [], []
-    for i in range(0, len(accs), batch_size):
-        chunk = accs[i:i + batch_size]
+    
+    i = 0
+    gen_idx = 1
+    while i < len(accs):
+        current_batch_size = batch_size if gen_idx == 1 else (batch_size - elites)
+        chunk = accs[i:i + current_batch_size]
         if chunk:
             batches.append(chunk)
-            labels.append(f"Gen {i // batch_size + 1}")
+            labels.append(f"Gen {gen_idx}")
+        i += current_batch_size
+        gen_idx += 1
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(max(6, len(batches) * 1.2), 5))
+        # Cap the width at 24 inches so it doesn't become too huge
+        fig, ax = plt.subplots(figsize=(min(24, max(6, len(batches) * 0.5)), 5))
         bp = ax.boxplot(
             batches,
             labels=labels,
@@ -257,6 +322,14 @@ def plot_population_diversity(records, out_dir, saved_files):
             capprops=dict(color="#6a7aad"),
             flierprops=dict(marker="o", color=ACCENT3, alpha=0.5, markersize=4),
         )
+        
+        if len(batches) > 20:
+            step = max(1, len(batches) // 20)
+            ax.set_xticks(list(range(1, len(batches) + 1, step)))
+            ax.set_xticklabels([labels[i] for i in range(0, len(batches), step)], rotation=45, ha='right')
+        else:
+            ax.set_xticklabels(labels, rotation=45, ha='right')
+            
         _apply_style(ax, "Population Diversity (Accuracy Spread per Generation Batch)",
                      "Generation Batch", "Accuracy (%)")
         _save(fig, os.path.join(out_dir, "population_diversity.png"), saved_files)
@@ -274,29 +347,98 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
         return
 
     batch_size = int(os.environ.get("POPULATION_SIZE", 20))
+    elites = 5
     avg_per_batch, best_per_batch, gen_labels = [], [], []
-    for i in range(0, max(len(accs), len(bests)), batch_size):
-        chunk_acc  = accs[i:i + batch_size]
-        chunk_best = bests[i:i + batch_size] if bests else []
+    
+    i = 0
+    gen_idx = 1
+    while i < max(len(accs), len(bests)):
+        current_batch_size = batch_size if gen_idx == 1 else (batch_size - elites)
+        chunk_acc  = accs[i:i + current_batch_size]
+        chunk_best = bests[i:i + current_batch_size] if bests else []
         if not chunk_acc:
             break
         avg_per_batch.append(sum(chunk_acc) / len(chunk_acc))
         best_per_batch.append(max(chunk_best) if chunk_best else max(chunk_acc))
-        gen_labels.append(f"Gen {i // batch_size + 1}")
+        gen_labels.append(f"Gen {gen_idx}")
+        i += current_batch_size
+        gen_idx += 1
 
     xs = list(range(len(gen_labels)))
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(max(6, len(xs) * 1.2), 5))
-        bars = ax.bar(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2)
+        fig, ax = plt.subplots(figsize=(min(24, max(6, len(xs) * 0.5)), 5))
+        
+        # Use a line plot instead of bars for better readability on long runs
+        ax.plot(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2, linewidth=2)
+        ax.fill_between(xs, avg_per_batch, alpha=0.2, color=BAR_COLOR, zorder=1)
+        
         ax.plot(xs, best_per_batch, color=ACCENT1, linewidth=2.5, marker="D",
-                markersize=6, label="Best Accuracy", zorder=3)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(gen_labels)
+                markersize=4, label="Best Accuracy", zorder=3)
+                
+        if len(xs) > 20:
+            step = max(1, len(xs) // 20)
+            ax.set_xticks(xs[::step])
+            ax.set_xticklabels([gen_labels[i] for i in range(0, len(xs), step)], rotation=45, ha='right')
+        else:
+            ax.set_xticks(xs)
+            ax.set_xticklabels(gen_labels, rotation=45, ha='right')
+            
         _apply_style(ax, "Best vs Average Accuracy per Generation Batch",
                      "Generation Batch", "Accuracy (%)")
         ax.legend()
         _save(fig, os.path.join(out_dir, "best_vs_avg_accuracy.png"), saved_files)
+
+
+def plot_time_per_generation(records, out_dir, saved_files):
+    if not records:
+        _warn("No stats records found — skipping time_per_generation.png")
+        return
+
+    generations = split_into_generations(records, 20, 15)
+    gen_numbers = []
+    gen_times = []
+    prev_end_time = None
+    
+    for i, gen in enumerate(generations):
+        gen_num = i + 1
+        gen_numbers.append(gen_num)
+        
+        times = [datetime.fromisoformat(e["timestamp"]) for e in gen if "timestamp" in e]
+        if times:
+            gen_start_time = prev_end_time if prev_end_time else times[0]
+            gen_end_time = times[-1]
+            gen_duration = (gen_end_time - gen_start_time).total_seconds() / 60.0 # in minutes
+            
+            if prev_end_time is None and len(times) > 1:
+                avg_model_time = (times[-1] - times[0]).total_seconds() / (len(times) - 1)
+                gen_duration += avg_model_time / 60.0
+                
+            gen_times.append(gen_duration)
+            prev_end_time = gen_end_time
+        else:
+            gen_times.append(0.0)
+
+    with plt.rc_context(PLOT_STYLE):
+        fig, ax = plt.subplots(figsize=(14, 7))
+        ax.plot(gen_numbers, gen_times, label="Time Taken (per gen)",
+                color="#a855f7", linewidth=2.0, alpha=0.9, marker="s", markersize=5)
+        
+        ax.set_xlabel("Generation", fontsize=13)
+        ax.set_ylabel("Time Taken (Minutes)", fontsize=13)
+        ax.set_title("LLM-Guided GA: Compute Time per Generation", fontsize=15, fontweight="bold")
+        ax.legend(fontsize=11, loc="upper right")
+        
+        # Override grid and ticks to exactly match baseline visual appeal
+        ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
+        ax.tick_params(colors="black")
+        
+        if generations:
+            ax.set_xlim(1, len(generations))
+            
+        plt.tight_layout()
+        path = os.path.join(out_dir, "time_per_generation.png")
+        _save(fig, path, saved_files)
 
 
 # ---------------------------------------------------------------------------
@@ -430,9 +572,12 @@ def plot_modification_success_rate(entries, out_dir, saved_files):
 # ---------------------------------------------------------------------------
 
 def main():
-    # timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    target_ts = None
+    if len(sys.argv) > 1:
+        target_ts = sys.argv[1]
+        
     # Use source log timestamp so visualizations correlate with their experiment
-    timestamp  = _extract_log_timestamp()
+    timestamp  = _extract_log_timestamp(target_ts)
     run_dir    = os.path.join(VIZ_ROOT, f"run_{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")
@@ -449,17 +594,16 @@ def main():
 
     # ── GA evolution ────────────────────────────────────────────────────────
     print("[1/2] Loading stats records …")
-    records = load_stats_records()
+    records = load_stats_records(target_ts)
     print(f"      Found {len(records)} evaluated model(s).\n")
 
     print("  Generating GA evolution plots …")
     plot_generation_accuracy(records,     ga_dir, saved_files)
-    plot_population_diversity(records,    ga_dir, saved_files)
-    plot_best_vs_avg_accuracy(records,    ga_dir, saved_files)
+    plot_time_per_generation(records,     ga_dir, saved_files)
 
     # ── Fine-tuning ─────────────────────────────────────────────────────────
     print("\n[2/2] Loading LLM evolution logs …")
-    entries = load_llm_logs()
+    entries = load_llm_logs(target_ts)
     print(f"      Found {len(entries)} log entry(ies).\n")
 
     print("  Generating fine-tuning plots …")

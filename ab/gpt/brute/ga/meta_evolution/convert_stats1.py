@@ -12,7 +12,7 @@ import json
 
 # BASE_DIR = "/shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/stats1/img-classification_cifar-10_GenFractalNet-0a41a6790da954dbb02b0349084634af"
 # BASE_DIR = "/shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/stats1"
-BASE_DIR = "/shared/ssd/home/b-a-singh/Thesis/NN-DATASET/nn-dataset/ab/nn/stat/train"
+BASE_DIR = "/shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/baseline_stats1"
 
 def main():
     if not os.path.isdir(BASE_DIR):

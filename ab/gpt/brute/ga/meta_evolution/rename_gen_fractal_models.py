@@ -27,7 +27,7 @@ BEST_STATS_DIR = os.path.join(BASE_DIR, "best_fractal_stats")
 MODEL_OLD_PREFIX = "FractalNet-"
 MODEL_NEW_PREFIX = "GenFractalNet-"
 STATS_OLD_PREFIX = "img-classification_cifar-10_FractalNet-"
-STATS_NEW_PREFIX = "img-classification_cifar-10_GenFractalNet-"
+STATS_NEW_PREFIX = "img-classification_cifar-10_acc_GenFractalNet-"
 
 # Regex to extract checksum from old-named model files (e.g. FractalNet-abc123.py)
 MODEL_RE = re.compile(r"^FractalNet-([a-f0-9]+)(\.py)?$")

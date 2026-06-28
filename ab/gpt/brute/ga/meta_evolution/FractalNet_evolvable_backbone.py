@@ -3,25 +3,31 @@ import torch.nn as nn
 import random
 import textwrap
 
-# --- 1. SEARCH SPACE (Massive Diversity Expansion) ---
+# --- 1. SEARCH SPACE ---
 SEARCH_SPACE = {
-    'n_columns': [2, 3],               
-    'base_channels': [16, 32, 64], 
-    'dropout_prob':[0.0, 0.1, 0.2, 0.3],
-    'lr':[0.01, 0.005, 0.003, 0.002, 0.001],
-    'momentum':[0.75, 0.8, 0.85, 0.9, 0.92, 0.95],
-    'n_blocks': [2, 3],                
+    'n_columns': [2, 3, 4, 5],               
+    
+    # Core Architecture Size
+    'base_channels': [16, 32, 64, 128], 
+    'n_blocks': [2, 3, 4, 5],                
+    
+    # Stochastic & Regularization
+    'dropout_prob': [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
+    'fc_dropout': [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
+    
+    # Hyperparameters
+    'lr': [0.01, 0.008, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001],
+    'momentum': [0.75, 0.8, 0.85, 0.88, 0.9, 0.92, 0.95, 0.98],
     
     # Structural Diversity
     'activation': ['ReLU', 'GELU', 'LeakyReLU', 'SiLU'],
-    'kernel_size':[3, 5],
+    'kernel_size': [1, 3, 5, 7],
     'pooling_type': ['Max', 'Avg'],
     
     # Advanced Diversity Genes
     'conv_type': ['Standard', 'Depthwise'],     
     'norm_type': ['BatchNorm', 'InstanceNorm'], 
-    'optimizer_type':['SGD', 'AdamW', 'RMSprop'], 
-    'fc_dropout':[0.0, 0.2, 0.5]               
+    'optimizer_type': ['SGD', 'AdamW', 'RMSprop']
 }
 
 def create_random_chromosome():
@@ -161,18 +167,14 @@ def generate_model_code_string(chromosome: dict) -> str:
                 out_right = self.right_2(self.right_1(x))
                 return self.join([out_left, out_right])
 
-        # --- Main Network ---
-        class Net(nn.Module):
-            def __init__(self, in_shape, out_shape, prm, device):
-                super(Net, self).__init__()
-                self.device = device
-
-                c_in = 3 
-                n_classes = out_shape[0] if out_shape else 10
+        # --- Modular Fractal Backbone ---
+        class FractalBackbone(nn.Module):
+            def __init__(self, in_channels):
+                super(FractalBackbone, self).__init__()
                 start_chan = int({chan})  
-
+                
                 self.entry = nn.Sequential(
-                    nn.Conv2d(c_in, start_chan, kernel_size=3, padding=1),
+                    nn.Conv2d(in_channels, start_chan, kernel_size=3, padding=1),
                     nn.BatchNorm2d(start_chan),
                     nn.ReLU(inplace=True)
                 )
@@ -201,14 +203,8 @@ def generate_model_code_string(chromosome: dict) -> str:
                 self.blocks = nn.ModuleList(blocks)
                 self.pools = nn.ModuleList(pools)
                 self.trans_layers = nn.ModuleList([t for t in trans_layers if t is not None])
-                self.final_channels = cur_chan
-
-                self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
                 
-                # Regularization before classifier head
-                self.fc_dropout = nn.Dropout(p={fc_drop})
-                self.fc = nn.Linear(self.final_channels, n_classes)
-                self.to(device)
+                self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
             def forward(self, x):
                 x = self.entry(x)
@@ -221,15 +217,68 @@ def generate_model_code_string(chromosome: dict) -> str:
                         t_idx += 1
                 x = self.global_pool(x)
                 x = x.flatten(1)
+                return x
+
+        # --- Standard Task Wrapper ---
+        class Net(nn.Module):
+            def __init__(self, in_shape, out_shape, prm, device):
+                super(Net, self).__init__()
+                self.device = device
                 
+                if len(in_shape) == 4:
+                    c_in = in_shape[1]
+                else:
+                    c_in = in_shape[0]
+                    
+                n_classes = out_shape[0] if out_shape else 10
+                
+                self.features = FractalBackbone(in_channels=c_in)
+                
+                # Infer dimensions dynamically
+                self.to(device)
+                self.eval()
+                with torch.no_grad():
+                    dummy = torch.zeros(1, c_in, 32, 32).to(device)
+                    dim_fused = self.features(dummy).shape[1]
+                self.train()
+                
+                self.fc_dropout = nn.Dropout(p={fc_drop})
+                self.fc = nn.Linear(dim_fused, n_classes)
+                self.to(device)
+
+                # --- NEW: Extreme Fast-Convergence Weight Initialization ---
+                for m in self.modules():
+                    if isinstance(m, nn.Conv2d):
+                        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.InstanceNorm2d):
+                        if m.weight is not None:
+                            nn.init.constant_(m.weight, 1)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+                    elif isinstance(m, nn.Linear):
+                        nn.init.normal_(m.weight, 0, 0.01)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+
+            def forward(self, x):
+                x = self.features(x)
                 x = self.fc_dropout(x)
                 x = self.fc(x)
                 return x
 
             def train_setup(self, prm):
-                self.criterion = nn.CrossEntropyLoss()
+                self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
                 self.optimizer = {opt_str}
                 self.max_batches = prm.get('max_batches', None)
+                
+                total_steps = 782 if self.max_batches is None else min(self.max_batches, 782)
+                self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                    self.optimizer,
+                    max_lr=prm['lr'] * 10,
+                    total_steps=total_steps,
+                    pct_start=0.3,
+                    anneal_strategy='cos'
+                )
                 return self.optimizer
 
             def learn(self, train_data):
@@ -241,7 +290,8 @@ def generate_model_code_string(chromosome: dict) -> str:
                     outputs = self(inputs)
                     loss = self.criterion(outputs, labels)
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), 3)
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), 5.0)
                     self.optimizer.step()
+                    self.scheduler.step()
     """)
     return code.strip()

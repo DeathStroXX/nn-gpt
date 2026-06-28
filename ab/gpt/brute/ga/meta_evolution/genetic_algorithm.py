@@ -89,34 +89,52 @@ class GeneticAlgorithm:
 
     # --- START LLM: EVOLUTION STRATEGY ---
     def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
-            if parent1_value == parent2_value:
-                return parent1_value
-            if gene_name in ['lr', 'momentum']:
-                return random.choice([parent1_value, parent2_value])
-            else:
-                return random.choice([parent1_value, parent2_value])
+                                                                                    if parent1_value == parent2_value:
+                                                                                        return parent1_value
+                                                                                    if gene_name in ['lr', 'momentum']:
+                                                                                        return random.choice([parent1_value, parent2_value])
+                                                                                    else:
+                                                                                        return random.choice([parent1_value, parent2_value])
 
     def _crossover(self, parent1_chromo, parent2_chromo):
-        child_chromo = {}
-        genes = list(self.search_space.keys())
-        point = random.randint(1, len(genes) - 1)
-        for i, gene in enumerate(genes):
-            child_chromo[gene] = self._coerce_gene_value(
-                gene,
-                self.combine_genes(gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes)),
-            )
-        return self._sanitize_chromosome(child_chromo)
+                                                        child_chromo = {}
+                                                        genes = list(self.search_space.keys())
+                                                        point = random.randint(1, len(genes) - 1)
+                                                        for i, gene in enumerate(genes):
+                                                            if i < point:
+                                                                child_chromo[gene] = parent1_chromo[gene]
+                                                            else:
+                                                                child_chromo[gene] = parent2_chromo[gene]
+                                                        return self._sanitize_chromosome(child_chromo)
 
     def mutate_gene(self, current_value, possible_values):
-        if not isinstance(possible_values, list):
-            raise ValueError('possible_values should be a list')
-        if not possible_values:
-            return current_value
-        # Strictly pick from possible_values to prevent out-of-bounds errors
-        if isinstance(current_value, (int, float, np.integer, np.floating)):
-            # Simulate random walk by picking nearest valid neighbor
-            return min(possible_values, key=lambda x: abs(float(x) - float(current_value)))
-        return random.choice(possible_values)
+                                            if not isinstance(possible_values, list):
+                                                raise ValueError('possible_values should be a list')
+                                            if not possible_values:
+                                                return current_value
+                                            if isinstance(current_value, (int, float, np.integer, np.floating)):
+                                                return min(possible_values, key=lambda x: abs(float(x) - float(current_value)))
+                                            return random.choice(possible_values)
+
+    def _mutate(self, chromosome):
+                                            mutated_chromo = chromosome.copy()
+                                            for gene in self.search_space.keys():
+                                                if random.random() < self.mutation_rate:
+                                                    possibles = [v for v in self.search_space[gene] if v != mutated_chromo[gene]]
+                                                    if possibles:
+                                                        mutated_chromo[gene] = self._coerce_gene_value(
+                                                            gene,
+                                                            self.mutate_gene(mutated_chromo[gene], possibles)
+                                                        )
+                                            return self._sanitize_chromosome(mutated_chromo)
+
+    def select_competitor(self, competitors):
+                                            fitnesses = [(x['fitness'] if x['fitness'] is not None else 0) for x in competitors]
+                                            if not fitnesses:
+                                                return random.choice(competitors)
+                                            total_fitness = sum(fitnesses)
+                                            probabilities = [f / total_fitness for f in fitnesses]
+                                            return random.choices(competitors, weights=probabilities, k=1)[0]
 
     def _mutate(self, chromosome):
         mutated_chromo = chromosome.copy()
@@ -129,21 +147,24 @@ class GeneticAlgorithm:
                         self.mutate_gene(mutated_chromo[gene], possibles)
                     )
         return self._sanitize_chromosome(mutated_chromo)
-
-    def select_competitor(self, competitors):
-        fitnesses = [(x['fitness'] if x['fitness'] is not None else 0) for x in competitors]
-        total_fitness = sum(fitnesses)
-        if total_fitness <= 0:
-            return random.choice(competitors)
-        probabilities = [f / total_fitness for f in fitnesses]
-        return random.choices(competitors, weights=probabilities, k=1)[0]
-
+    
+    def _crossover(self, parent1_chromo, parent2_chromo):
+        child_chromo = {}
+        genes = list(self.search_space.keys())
+        point = random.randint(1, len(genes) - 1)
+        for i, gene in enumerate(genes):
+            if i < point:
+                child_chromo[gene] = parent1_chromo[gene]
+            else:
+                child_chromo[gene] = parent2_chromo[gene]
+        return self._sanitize_chromosome(child_chromo)
+    
     def _selection(self):
-        k = 3
-        # Sample parents primarily from the MAP-Elites archive to preserve diverse outliers
-        pool = list(self.archive.values()) if self.archive else self.population
-        competitors = random.sample(pool, min(k, len(pool)))
-        return self.select_competitor(competitors)
+                        k = 3
+                        # Sample parents primarily from the MAP-Elites archive to preserve diverse outliers
+                        pool = list(self.archive.values()) if self.archive else self.population
+                        competitors = random.sample(pool, min(k, len(pool)))
+                        return self.select_competitor(competitors)
     # --- END LLM: EVOLUTION STRATEGY ---
 
     def run(self, num_generations, fitness_function):
