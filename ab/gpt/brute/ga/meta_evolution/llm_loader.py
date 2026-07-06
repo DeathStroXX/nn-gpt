@@ -112,8 +112,14 @@ class LocalLLMLoader:
         # Ensure model is in eval mode for generation
         self.model.eval()
         
+        messages = [
+            {"role": "system", "content": "You are an elite AI Research Engineer and Evolutionary Computation Expert."},
+            {"role": "user", "content": prompt}
+        ]
+        chat_text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
         inputs = self.tokenizer(
-            prompt, return_tensors="pt", truncation=True,
+            chat_text, return_tensors="pt", truncation=True,
             max_length=self.config.get("context_length", 4096)
         )
         
@@ -153,7 +159,6 @@ class LocalLLMLoader:
         print(f"[LoRA] Training on {len(training_data)} examples...")
         self.model.train()
         
-        # optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-5) # Lowered: 2e-4 was causing mode collapse
         
         accumulation_steps = min(4, len(training_data)) # Accumulate over up to 4 examples
@@ -163,17 +168,24 @@ class LocalLLMLoader:
             optimizer.zero_grad()
             
             for i, item in enumerate(training_data):
-                # Format: "Prompt... \n Completion..."
-                full_text = item['prompt'] + "\n" + item['completion']
+                messages = [
+                    {"role": "system", "content": "You are an elite AI Research Engineer and Evolutionary Computation Expert."},
+                    {"role": "user", "content": item['prompt']},
+                    {"role": "assistant", "content": item['completion']}
+                ]
+                full_text = self.tokenizer.apply_chat_template(messages, tokenize=False)
                 
-                # inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=2048)
                 inputs = self.tokenizer(full_text, return_tensors="pt", truncation=True, max_length=self.config.get("context_length", 4096))
                 if torch.cuda.is_available():
                     inputs = inputs.to("cuda")
                 
                 # --- Loss Masking: only compute loss on completion tokens ---
-                # Tokenize prompt alone to find where completion starts
-                prompt_tokens = self.tokenizer(item['prompt'] + "\n", return_tensors="pt", truncation=True, max_length=self.config.get("context_length", 4096))
+                prompt_msgs = [
+                    {"role": "system", "content": "You are an elite AI Research Engineer and Evolutionary Computation Expert."},
+                    {"role": "user", "content": item['prompt']}
+                ]
+                prompt_text = self.tokenizer.apply_chat_template(prompt_msgs, tokenize=False, add_generation_prompt=True)
+                prompt_tokens = self.tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=self.config.get("context_length", 4096))
                 prompt_length = prompt_tokens["input_ids"].shape[1]
                 
                 labels = inputs["input_ids"].clone()

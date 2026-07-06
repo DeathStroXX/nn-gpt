@@ -17,17 +17,15 @@ from ab.gpt.brute.ga.meta_evolution.rl_rewards import calculate_meta_reward
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODIFIED_GA_DIR = os.path.join(BASE_DIR, "modified_GA_cifar10")
-os.makedirs(MODIFIED_GA_DIR, exist_ok=True)
-TARGET_FILE = os.path.join(MODIFIED_GA_DIR, "genetic_algorithm_evolved.py")
+TARGET_FILE = os.path.join(BASE_DIR, "genetic_algorithm_cifar100.py")
 
 # Fair Benchmarking: Reset baseline if starting fresh
-CHECKPOINT_FILE = os.path.join(BASE_DIR, "GenFractal_ckpt_cifar10.pkl")
-BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup_cifar10")
-ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar10")
+CHECKPOINT_FILE = os.path.join(BASE_DIR, "GenFractal_ckpt_cifar100.pkl")
+BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup_cifar100")
+ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar100")
 
 if not os.path.exists(CHECKPOINT_FILE):
-    baseline_file = os.path.join(BASE_DIR, "genetic_algorithm_baseline.py")
+    baseline_file = os.path.join(BASE_DIR, "genetic_algorithm_baseline_cifar100.py")
     if os.path.exists(baseline_file):
         shutil.copy(baseline_file, TARGET_FILE)
         print("[Meta] No checkpoint found. Resetting target GA to pristine baseline.")
@@ -53,12 +51,12 @@ if not os.path.exists(CHECKPOINT_FILE):
                 shutil.move(item_path, historic_adapter_dir)
         print(f"[Meta] Moved LLM LoRA weights to {historic_adapter_dir} for fresh start.")
 
-RUNNER_SCRIPT = os.path.join(BASE_DIR, "run_fractal_evolution.py")
+RUNNER_SCRIPT = os.path.join(BASE_DIR, "run_fractal_evolution_cifar100.py")
 RUN_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-LOGS_DIR = os.path.join(BASE_DIR, "logs_cifar10")
+LOGS_DIR = os.path.join(BASE_DIR, "logs_cifar100")
 os.makedirs(LOGS_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_cifar10_{RUN_TIMESTAMP}.jsonl")
-GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_cifar10_{RUN_TIMESTAMP}.jsonl")
+LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_cifar100_{RUN_TIMESTAMP}.jsonl")
+GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_cifar100_{RUN_TIMESTAMP}.jsonl")
 
 # KEEP BENCHMARKS SMALL FOR FAST FEEDBACK, BUT CONFIGURABLE VIA ENV
 BENCH_GENS = int(os.environ.get("GENERATIONS", 3))
@@ -79,7 +77,7 @@ SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 BASE_PROMPT_TEMPLATE = """
 ### ROLE & OBJECTIVE ###
 You are an elite AI Research Engineer and Evolutionary Computation Expert. 
-Your task is to rewrite the core evolutionary operators of a Quality-Diversity Genetic Algorithm (MAP-Elites) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
+Your task is to rewrite the core evolutionary operators of a Quality-Diversity Genetic Algorithm (MAP-Elites) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-100.
 Your generated code will be AUTOMATICALLY INJECTED into a production Python class via string replacement. Any syntax error, hallucinated import, or invalid indentation will crash the entire pipeline.
 
 Your objective is NOT just to produce a "good" algorithm in the abstract. You must propose crossover and mutation strategies that will theoretically expand the frontier of what the GA has seen:
@@ -132,10 +130,10 @@ Learn from past failures. DO NOT repeat failed logic. If a previous attempt fail
 1. You MUST write your mathematical reasoning and planning inside `<thinking> ... </thinking>` tags BEFORE writing the code block.
 2. Wrap your ENTIRE Python code output in a single ```python ... ``` markdown block AFTER your thinking tags.
 3. The code inside the block MUST start exactly with `    def ` (4 spaces indent).
-4. Output the exact code for the requested method(s): `{method_names}`.
+4. Output EXACTLY ONE method: `{method_name}`.
 
 === YOUR SPECIFIC TASK ===
-You must rewrite the following component(s): `{method_names}`
+You must rewrite the following component: `{method_name}`
 {task_specific_instructions}
 
 Current implementation to be replaced:
@@ -216,8 +214,7 @@ class MetaEvolver:
                     print(line, end="") # Stream line
                     full_output += line
                     
-                BENCH_TIMEOUT = int(os.environ.get("BENCH_TIMEOUT", 1800))
-                process.wait(timeout=BENCH_TIMEOUT)
+                process.wait(timeout=21600)
                 
                 error_trace = ""
                 if process.returncode != 0:
@@ -313,29 +310,12 @@ class MetaEvolver:
         code_lines = [l for l in lines if not l.strip().startswith(("Here", "Note", "I have", "```"))]
         return "\n".join(code_lines).strip()
 
-    def evolve_component(self, method_names, attempt=1, total_attempts=5):
-        if isinstance(method_names, str):
-            method_names = [method_names]
-        methods_str = ", ".join(method_names)
-        
-        print(f"\n[Meta] Evolving: {methods_str}")
+    def evolve_component(self, method_name, attempt=1, total_attempts=5):
+        print(f"\n[Meta] Evolving: {method_name}")
         with open(TARGET_FILE, 'r') as f: full_code = f.read()
         
-        orig_codes = []
-        existing_methods = []
-        for name in method_names:
-            c, span, indent = self._extract_method(full_code, name)
-            if c:
-                orig_codes.append(f"### {name} ###\n{c}")
-                existing_methods.append((name, span, indent))
-            else:
-                print(f"[Meta] Note: {name} not found in target code. Will be injected as new.")
-        
-        if not existing_methods:
-            print(f"[Meta] Failed to extract any of the target methods. Cannot proceed.")
-            return False
-
-        orig_code = "\n\n".join(orig_codes)
+        orig_code, span, indent_col = self._extract_method(full_code, method_name)
+        if not orig_code: return
 
         print(f"--- [DEBUG] Input Code ---\n{orig_code}\n-------------------------")
 
@@ -368,12 +348,41 @@ class MetaEvolver:
                         skel = skeletonize_code(code_str)
                         hof_lines.append(f"### Example from {f} ###\n```python\n{skel}\n```")
                 if hof_lines:
-                    hall_of_fame_str = "\n\n".join(hof_lines)
+        hall_of_fame_str = "\n\n".join(hof_lines) if hof_lines else "No successful runs yet."
 
-        # Skeletonize target code
         skel_full_code = skeletonize_code(full_code)
 
-        # LLM Generation with Full Context
+        orig_codes = []
+        spans = []
+        indent_cols = []
+        existing_methods = []
+        for name in method_names:
+            c, span, indent = self._extract_method(full_code, name)
+            if c:
+                orig_codes.append(f"### {name} ###\n{c}")
+                existing_methods.append((name, span, indent))
+            else:
+                print(f"[Meta] Note: {name} not found in target code. Will be injected as new.")
+        
+        if not existing_methods:
+            print(f"[Meta] Failed to extract any of the target methods. Cannot proceed.")
+            return False
+
+        orig_code = "\n\n".join(orig_codes)
+
+        print(f"--- [DEBUG] Input Code ---\n{orig_code}\n-------------------------")
+
+        history_str = "No previous attempts yet."
+        if hasattr(self, 'attempt_history') and self.attempt_history:
+            history_lines = []
+            for idx, h in enumerate(self.attempt_history[-3:]):
+                status = h.get("status", "Unknown")
+                score = h.get("score", 0.0)
+                trace = h.get("error_trace", "")
+                trace_str = f"\nError Trace:\n{trace}" if trace else ""
+                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}{trace_str}\nCode:\n```python\n{h.get('code')}\n```")
+            history_str = "\n\n".join(history_lines)
+
         prompt = BASE_PROMPT_TEMPLATE.format(
             search_space=SEARCH_SPACE_STR,
             full_code=skel_full_code,
@@ -386,7 +395,6 @@ class MetaEvolver:
             global_archive_size=self.global_archive_size
         )
         
-        # Temperature scheduling: 0.9 down to 0.4
         progress = (attempt - 1) / max(1, total_attempts - 1)
         temperature = max(0.4, 0.9 - (0.5 * progress))
         print(f"[Meta] Generation Temperature: {temperature:.2f}")
@@ -395,11 +403,9 @@ class MetaEvolver:
         
         print(f"--- [DEBUG] Raw Response ---\n{raw_res}\n--------------------------")
         
-        # Extract Thinking Trace
         thinking_match = re.search(r"<thinking>(.*?)</thinking>", raw_res, re.DOTALL)
         thinking_trace = thinking_match.group(1).strip() if thinking_match else "No thinking trace provided."
 
-        # Extract all code blocks and combine them
         blocks = re.findall(r"```python(.*?)```", raw_res, re.DOTALL)
         if not blocks:
             blocks = re.findall(r"```(.*?)```", raw_res, re.DOTALL)
@@ -410,22 +416,18 @@ class MetaEvolver:
             
         combined_code = "\n\n".join(b.strip() for b in blocks)
         
-        # Validate that all requested methods are present in the output
         for name in method_names:
             if f"def {name}" not in combined_code:
                 print(f"[Meta] LLM response is missing required method: {name}")
                 return False
 
-        # Sort existing methods by span start in REVERSE order (bottom to top)
         existing_methods.sort(key=lambda x: x[1][0], reverse=True)
         
         replacements = []
         for i, (name, span, indent) in enumerate(existing_methods):
             if i == len(existing_methods) - 1:
-                # Top-most method: replace its span with the new combined code
                 replacements.append((span, indent, combined_code))
             else:
-                # Other methods: delete them (they are included in the combined_code now)
                 replacements.append((span, indent, ""))
 
         valid_syntax = False
@@ -451,7 +453,7 @@ class MetaEvolver:
         
         if valid_syntax:
             target_filename = os.path.basename(TARGET_FILE)
-            bkp = os.path.join(BACKUP_DIR, f"{target_filename}_{'_'.join(method_names)}.bak")
+            bkp = os.path.join(BACKUP_DIR, f"{target_filename}_{method_name}.bak")
             shutil.copy(TARGET_FILE, bkp)
             with open(TARGET_FILE, 'w') as f: f.write(test_full)
             
@@ -459,7 +461,7 @@ class MetaEvolver:
             # Exercises ALL 6 evolvable components with realistic dummy data.
             try:
                 import importlib
-                import ab.gpt.brute.ga.meta_evolution.genetic_algorithm as ga_mod
+                import ab.gpt.brute.ga.meta_evolution.genetic_algorithm_cifar100 as ga_mod
                 importlib.reload(ga_mod)
                 test_ga = ga_mod.GeneticAlgorithm(
                     population_size=4, search_space=SEARCH_SPACE,
@@ -661,7 +663,7 @@ class MetaEvolver:
                     adapter_save_exception = str(e)
                     print(f"[LoRA] Adapter save failed: {e}")
                 finally:
-                    adapter_save_end_time = datetime.now().isoformat()
+                                        adapter_save_end_time = datetime.now().isoformat()
                     
         if 'bkp' in locals() and not (valid_syntax and reward > 0):
             print("--> Reverting File.")
@@ -684,6 +686,7 @@ class MetaEvolver:
             "code": combined_code, 
             "error_trace": bench_stats.get("error_trace", "") if not valid_syntax or reward <= 0 else ""
         })
+            
         # Log successful LLM generation
         self._log_llm_generation({
             "timestamp": RUN_TIMESTAMP,
@@ -740,13 +743,13 @@ if __name__ == "__main__":
     # NEW — keep trying until META_ITERATIONS *successful* evolutions are achieved
     # Priority: env var META_ATTEMPTS > model_config.json meta_attempts > default 5
     META_ITERATIONS = int(os.environ.get("META_ATTEMPTS", evolver.llm.config.get("meta_attempts", 5)))
-    COMPONENTS = [("_crossover", "combine_genes"), ("_mutate", "mutate_gene"), ("_selection", "select_competitor")]
+    COMPONENTS = ["combine_genes", "_crossover", "mutate_gene", "_mutate", "select_competitor", "_selection"]
 
     successes = 0
     total_attempts = 0
     component_index = 0
     consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 10
+    MAX_CONSECUTIVE_FAILURES = 5
     MAX_TOTAL_ATTEMPTS = META_ITERATIONS * 10
 
     print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry up to {MAX_CONSECUTIVE_FAILURES} times per component)")
@@ -764,7 +767,7 @@ if __name__ == "__main__":
             consecutive_failures += 1
             print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}, successes so far: {successes}/{META_ITERATIONS})")
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                print(f"[Meta] ⚠️ Reached max consecutive failures ({MAX_CONSECUTIVE_FAILURES}) for {', '.join(component)}. Skipping to next component.")
+                print(f"[Meta] ⚠️ Reached max consecutive failures ({MAX_CONSECUTIVE_FAILURES}) for {component}. Skipping to next component.")
                 consecutive_failures = 0
                 component_index = (component_index + 1) % len(COMPONENTS)
         time.sleep(2)

@@ -14,9 +14,10 @@ LOGS_DIR = os.path.join(BASE_DIR, "logs")
 if len(sys.argv) > 1:
     LOG_FILE = sys.argv[1]
 else:
-    log_files = glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_*.jsonl"))
+    log_files = glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_cifar10_*.jsonl")) + \
+                glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_*.jsonl"))
     if not log_files:
-        raise FileNotFoundError(f"No baseline_evaluations_*.jsonl found in {LOGS_DIR}")
+        raise FileNotFoundError(f"No baseline_evaluations*.jsonl found in {LOGS_DIR}")
     LOG_FILE = max(log_files, key=os.path.getmtime)
 
 GEN1_SIZE = 20
@@ -128,7 +129,7 @@ def main():
     # timestamp = log_basename.replace("baseline_evaluations_", "").replace(".jsonl", "")
     # plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{timestamp}")
     if "baseline_evaluations_" in log_basename:
-        timestamp = log_basename.replace("baseline_evaluations_", "").replace(".jsonl", "")
+        timestamp = log_basename.replace("baseline_evaluations_cifar10_", "").replace("baseline_evaluations_", "").replace(".jsonl", "")
         plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{timestamp}")
     elif "ga_evaluations_" in log_basename:
         timestamp = log_basename.replace("ga_evaluations_", "").replace(".jsonl", "")

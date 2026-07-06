@@ -1,29 +1,43 @@
+# ============================
 # Python
+# ============================
 __pycache__/
 *.pyc
 .venv/
 
-# Local Experiment Artifacts
-ga_fractal_arch/
-stats/
-ga_fractal_arch1/
-stats1/
-stats_plain_GA/
-ga_fractal_arch_plain_GA/
-baseline_stats/
-ga_fractal_arch_plain_GA1/
-baseline_stats1/
-baseline_ga_fractal_arch/
-
-baseline_stats1/
-baseline_ga_fractal_arch1/
-
+# ============================
+# General Artifacts
+# ============================
 out/
-fine_tuned_adapter/
-ga_history_backup/
+out_nneval_tmp_pid_*/
 logs/
 *.jsonl
-
-# Checkpoints
-fractal_ga_ckpt.pkl
 visualizations/
+
+# ============================
+# Checkpoints (all .pkl files)
+# ============================
+*.pkl
+
+# ============================
+# Stats & Model Directories
+# (wildcard covers cifar10, cifar100, and legacy suffixes like 1, 1001)
+# ============================
+stats*/
+baseline_stats*/
+best_*stats*/
+ga_fractal_arch*/
+baseline_ga_fractal_arch*/
+
+# ============================
+# Training Adapters & History
+# ============================
+fine_tuned_adapter*/
+ga_history_backup*/
+
+# ============================
+# Experiment Output Directories
+# ============================
+logs_cifar*/
+modified_GA_cifar*/
+stats_plain_GA/
