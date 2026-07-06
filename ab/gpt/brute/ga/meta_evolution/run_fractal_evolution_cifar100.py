@@ -35,7 +35,7 @@ def suppress_output():
             sys.stderr = old_stderr
 
 import torch
-from ab.gpt.brute.ga.meta_evolution.modified_GA_cifar10.genetic_algorithm_evolved import GeneticAlgorithm
+from ab.gpt.brute.ga.meta_evolution.genetic_algorithm_cifar100 import GeneticAlgorithm
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
 
@@ -47,11 +47,11 @@ logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 # --- PATH SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # This is the folder where unique fractal models will be saved
-ARCH_DIR = os.path.join(BASE_DIR, 'ga_fractal_arch_cifar10') 
-STATS_DIR = os.path.join(BASE_DIR, 'stats_cifar10')
-# CHECKPOINT = 'GenFractal_ckpt_cifar10.pkl'
-CHECKPOINT = os.path.join(BASE_DIR, 'GenFractal_ckpt_cifar10.pkl')
-BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_stats_cifar10')
+ARCH_DIR = os.path.join(BASE_DIR, 'ga_fractal_arch_cifar100') 
+STATS_DIR = os.path.join(BASE_DIR, 'statscifar100')
+# CHECKPOINT = 'GenFractal_ckpt.pkl'
+CHECKPOINT = os.path.join(BASE_DIR, 'GenFractal_cifar100_ckpt.pkl')
+BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_statscifar100')
 
 os.makedirs(ARCH_DIR, exist_ok=True)
 os.makedirs(STATS_DIR, exist_ok=True)
@@ -81,8 +81,8 @@ def _load_existing_checksums():
     """Scan stats/ directory for previously evaluated models and cache their fitness."""
     count = 0
     # prefix = "img-classification_cifar_GenFractalNet-"   # BUG: missing '-10', never matched any folder
-    # prefix = "img-classification_cifar-10_GenFractalNet-"
-    prefix = "img-classification_cifar-10_acc_GenFractalNet-"
+    # prefix = "img-classification_cifar-100_GenFractalNet-"
+    prefix = "img-classification_cifar-100_acc_GenFractalNet-"
     if os.path.isdir(STATS_DIR):
         for name in os.listdir(STATS_DIR):
             if name.startswith(prefix):
@@ -131,7 +131,7 @@ def _lookup_stored_fitness(checksum: str) -> float:
     from the stats/ folder instead of returning 0.0.
     Returns fitness as a percentage (e.g. 54.69), or 0.0 if the file is missing/unreadable.
     """
-    stats_dir_name = f"img-classification_cifar-10_acc_GenFractalNet-{checksum}"
+    stats_dir_name = f"img-classification_cifar-100_acc_GenFractalNet-{checksum}"
     stats_dir_path = os.path.join(STATS_DIR, stats_dir_name)
     if not os.path.isdir(stats_dir_path):
         print(f"  - Duplicate: no stored stats found for {checksum[:8]}, returning 0.0")
@@ -238,7 +238,7 @@ def fitness_function(chromosome: dict) -> float:
         evaluator = Eval(
             model_source_package=ARCH_DIR,
             task='img-classification',
-            dataset='cifar-10',
+            dataset='cifar-100',
             metric='acc',
             prm=eval_prm,
             save_to_db=False,
@@ -283,7 +283,7 @@ def fitness_function(chromosome: dict) -> float:
                 full_res = {
                     'config': {
                         'task': 'img-classification',
-                        'dataset': 'cifar-10',
+                        'dataset': 'cifar-100',
                         'metric': 'acc',
                         'model': model_name
                     },
@@ -300,8 +300,8 @@ def fitness_function(chromosome: dict) -> float:
         
         # Save exact requested stats format to a JSON folder structure
         # One JSON file per epoch: 1.json, 2.json, ..., N.json
-        # model_stats_dir_name = f"img-classification_cifar-10_GenFractalNet-{model_checksum}"
-        model_stats_dir_name = f"img-classification_cifar-10_acc_GenFractalNet-{model_checksum}"
+        # model_stats_dir_name = f"img-classification_cifar-100_GenFractalNet-{model_checksum}"
+        model_stats_dir_name = f"img-classification_cifar-100_acc_GenFractalNet-{model_checksum}"
         model_stats_dir_path = os.path.join(STATS_DIR, model_stats_dir_name)
         os.makedirs(model_stats_dir_path, exist_ok=True)
 
@@ -430,7 +430,7 @@ if __name__ == "__main__":
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         logs_dir = os.path.join(BASE_DIR, "logs")
         os.makedirs(logs_dir, exist_ok=True)
-        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_cifar10_{run_ts}.jsonl")
+        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_cifar100_{run_ts}.jsonl")
         print(f"[LOG] GA eval log: {os.environ['GA_EVAL_LOG']}")
 
     if args.clean and os.path.exists(CHECKPOINT):
@@ -455,15 +455,15 @@ if __name__ == "__main__":
         # Save Best Architecture
         if best:
              best_code = generate_model_code_string(best['chromosome'])
-             best_path = os.path.join(BASE_DIR, "best_fractal_model.py")
+             best_path = os.path.join(BASE_DIR, "best_fractal_model_cifar100.py")
              with open(best_path, "w") as f:
                  f.write(best_code)
              print(f"[Best] Saved best model to {best_path}")
 
              # Copy Winning Stats
              best_checksum = uuid4(best_code)
-             # best_folder_name = f"img-classification_cifar-10_GenFractalNet-{best_checksum}"
-             best_folder_name = f"img-classification_cifar-10_acc_GenFractalNet-{best_checksum}"
+             # best_folder_name = f"img-classification_cifar-100_GenFractalNet-{best_checksum}"
+             best_folder_name = f"img-classification_cifar-100_acc_GenFractalNet-{best_checksum}"
              src_stats_path = os.path.join(STATS_DIR, best_folder_name)
              dst_stats_path = os.path.join(BEST_STATS_DIR, best_folder_name)
 
@@ -486,7 +486,7 @@ if __name__ == "__main__":
                  print(f"[Best] Warning: stats folder not found for checksum {best_checksum[:8]}")
 
              # Save Best Info Metadata
-             info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+             info_path = os.path.join(BASE_DIR, "best_fractal_info_cifar100.json")
              best_info = {
                  "timestamp": datetime.now().isoformat(),
                  "checksum": best_checksum,
@@ -527,7 +527,7 @@ if __name__ == "__main__":
             "fitness_history": history,
             "total_generations": target_gens
         }
-        with open(os.path.join(BASE_DIR, "evolved_results.json"), "w") as f:
+        with open(os.path.join(BASE_DIR, "evolved_results_cifar100.json"), "w") as f:
             json.dump(trajectory, f, indent=4)
 
     except Exception as e:

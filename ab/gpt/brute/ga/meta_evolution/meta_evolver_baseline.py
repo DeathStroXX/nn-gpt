@@ -36,7 +36,7 @@ def suppress_output():
 
 import torch
 from ab.gpt.brute.ga.meta_evolution.genetic_algorithm_baseline import GeneticAlgorithm
-from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_baseline import SEARCH_SPACE, generate_model_code_string
+from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
 
 import logging
@@ -61,6 +61,8 @@ os.makedirs(STATS_DIR, exist_ok=True)
 fitness_cache = {}
 
 def _log_eval(checksum, accuracy, is_cached):
+    if float(accuracy) <= 0.0:
+        return
     log_file = os.environ.get("GA_EVAL_LOG")
     if log_file:
         try:
@@ -339,7 +341,7 @@ def fitness_function(chromosome: dict) -> float:
 
         # Stats verified — promote temp model file to its final location
         os.rename(tmp_filepath, final_filepath)
-        print(f"  - Model persisted to baseline_ga_fractal_arch/ (stats verified: {len(_stats_json_files)} JSON file(s))")
+        print(f"  - Model persisted to {os.path.basename(ARCH_DIR)}/ (stats verified: {len(_stats_json_files)} JSON file(s))")
 
         # --- Layered accuracy extraction ---
         # Priority: top-level > hyperparameters (library writes here) >
@@ -402,6 +404,9 @@ def fitness_function(chromosome: dict) -> float:
                 print(f"  - Cleaned up partial stats: {model_stats_dir_path}")
         except Exception as cleanup_err:
             print(f"  - Warning: cleanup failed: {cleanup_err}")
+        
+        # Log the failure entry to ga_evaluations
+        _log_eval(model_checksum, 0.0, False)
         return 0.0
 
 if __name__ == "__main__":
@@ -420,7 +425,7 @@ if __name__ == "__main__":
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         logs_dir = os.path.join(BASE_DIR, "logs")
         os.makedirs(logs_dir, exist_ok=True)
-        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"baseline_evaluations_{run_ts}.jsonl")
+        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"baseline_evaluations_cifar10_{run_ts}.jsonl")
         print(f"[LOG] Baseline GA eval log: {os.environ['GA_EVAL_LOG']}")
 
     if args.clean and os.path.exists(CHECKPOINT):
@@ -531,7 +536,7 @@ if __name__ == "__main__":
     # (meta_evolver.py handles its own visualization at the end)
     if _standalone_mode:
         try:
-            from ab.gpt.brute.ga.meta_evolution.visualize_training import main as generate_plots
+            from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
             print("\n=== Generating Visualizations ===")
             generate_plots()
         except Exception as e:

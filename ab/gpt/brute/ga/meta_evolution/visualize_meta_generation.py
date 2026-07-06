@@ -1,5 +1,5 @@
 """
-visualize_training.py
+visualize_meta_generation.py
 ---------------------
 Generates and saves plots for:
   1. GA evolution progress  (from stats/ JSON files)
@@ -17,7 +17,7 @@ Output is saved into a timestamped folder:
           score_improvement.png
 
 Usage:
-    python3 visualize_training.py
+    python3 visualize_meta_generation.py
 """
 
 import os
@@ -105,12 +105,18 @@ def _extract_log_timestamp(target_ts=None):
     Priority: target_ts > ga_evaluations > LLM-evolution-logs > pod log > fallback to now().
     """
     if target_ts:
-        return target_ts
+        target_files = glob.glob(os.path.join(BASE_DIR, "logs*", f"*{target_ts}*.jsonl"))
+        is_cifar100 = any("cifar100" in os.path.basename(f) for f in target_files)
+        return target_ts, is_cifar100
 
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
     
     # Priority order of log file patterns to check
     search_patterns = [
+        os.path.join(BASE_DIR, "logs_cifar10", "ga_evaluations_*.jsonl"),
+        os.path.join(BASE_DIR, "logs_cifar100", "ga_evaluations_*.jsonl"),
+        os.path.join(BASE_DIR, "logs_cifar10", "LLM-evolution-logs_*.jsonl"),
+        os.path.join(BASE_DIR, "logs_cifar100", "LLM-evolution-logs_*.jsonl"),
         os.path.join(LOGS_DIR, "ga_evaluations_*.jsonl"),
         os.path.join(LOGS_DIR, "LLM-evolution-logs_*.jsonl"),
         os.path.join(LOGS_DIR, "pod_*.log"),
@@ -125,10 +131,11 @@ def _extract_log_timestamp(target_ts=None):
             latest = max(files, key=os.path.getmtime)
             match = ts_pattern.search(os.path.basename(latest))
             if match:
-                return match.group(1)
+                is_cifar100 = "cifar100" in os.path.basename(latest)
+                return match.group(1), is_cifar100
     
     # Final fallback: current wall-clock time
-    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), False
 
 
 # ---------------------------------------------------------------------------
@@ -142,12 +149,16 @@ def load_stats_records(target_ts=None):
     records = []
     if target_ts:
         log_files = [
+            os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations_{target_ts}.jsonl"),
             os.path.join(LOGS_DIR, f"ga_evaluations_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, f"ga_evaluations_{target_ts}.jsonl")
         ]
         log_files = [f for f in log_files if os.path.exists(f)]
     else:
-        log_files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations*.jsonl"))
+        log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", "ga_evaluations*.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_cifar100", "ga_evaluations*.jsonl")) + \
+                    glob.glob(os.path.join(LOGS_DIR, "ga_evaluations*.jsonl"))
         if not log_files:
             log_files = glob.glob(os.path.join(BASE_DIR, "ga_evaluations*.jsonl"))
             
@@ -191,12 +202,16 @@ def load_llm_logs(target_ts=None):
     """
     if target_ts:
         log_files = [
+            os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs_{target_ts}.jsonl"),
             os.path.join(LOGS_DIR, f"LLM-evolution-logs_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, f"LLM-evolution-logs_{target_ts}.jsonl")
         ]
         log_files = [f for f in log_files if os.path.exists(f)]
     else:
-        log_files = glob.glob(os.path.join(LOGS_DIR, "LLM-evolution-logs*.jsonl"))
+        log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", "LLM-evolution-logs*.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_cifar100", "LLM-evolution-logs*.jsonl")) + \
+                    glob.glob(os.path.join(LOGS_DIR, "LLM-evolution-logs*.jsonl"))
         if not log_files:
             log_files = glob.glob(os.path.join(BASE_DIR, "LLM-evolution-logs*.jsonl"))
             
@@ -268,8 +283,11 @@ def plot_generation_accuracy(records, out_dir, saved_files):
             ax.set_xlim(1, len(generations))
             ax.set_xticks(np.arange(0, len(generations) + 1, 20))
             
-        ax.set_yticks(np.arange(30, 101, 10))
-        ax.set_ylim(bottom=30)
+        if running_peaks:
+            upper_limit = min(100, max(running_peaks) + 5)
+            ax.set_ylim(30, upper_limit)
+        else:
+            ax.set_ylim(30, 100)
 
         if running_peaks:
             ax.annotate(f"{running_peaks[-1]:.2f}%",
@@ -305,7 +323,7 @@ def plot_population_diversity(records, out_dir, saved_files):
         chunk = accs[i:i + current_batch_size]
         if chunk:
             batches.append(chunk)
-            labels.append(f"Gen {gen_idx}")
+            labels.append(f"{gen_idx}")
         i += current_batch_size
         gen_idx += 1
 
@@ -340,15 +358,15 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
         _warn("No stats records found — skipping best_vs_avg_accuracy.png")
         return
 
-    accs = [r["accuracy"] * 100 for r in records if r["accuracy"] is not None]
-    bests = [r["best_accuracy"] * 100 for r in records if r["best_accuracy"] is not None]
+    accs = [r["accuracy"] for r in records if r["accuracy"] is not None]
+    bests = [r.get("best_accuracy") for r in records if r.get("best_accuracy") is not None]
     if not accs:
         _warn("No accuracy values — skipping best_vs_avg_accuracy.png")
         return
 
     batch_size = int(os.environ.get("POPULATION_SIZE", 20))
     elites = 5
-    avg_per_batch, best_per_batch, gen_labels = [], [], []
+    avg_per_batch, best_per_batch, median_per_batch, ci_per_batch, gen_labels = [], [], [], [], []
     
     i = 0
     gen_idx = 1
@@ -358,9 +376,16 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
         chunk_best = bests[i:i + current_batch_size] if bests else []
         if not chunk_acc:
             break
-        avg_per_batch.append(sum(chunk_acc) / len(chunk_acc))
+        avg = sum(chunk_acc) / len(chunk_acc)
+        avg_per_batch.append(avg)
         best_per_batch.append(max(chunk_best) if chunk_best else max(chunk_acc))
-        gen_labels.append(f"Gen {gen_idx}")
+        median_per_batch.append(np.median(chunk_acc))
+        
+        # Calculate 95% Confidence Interval for the mean
+        std = np.std(chunk_acc, ddof=1) if len(chunk_acc) > 1 else 0
+        ci = 1.96 * (std / np.sqrt(len(chunk_acc)))
+        ci_per_batch.append(ci)
+        gen_labels.append(f"{gen_idx}")
         i += current_batch_size
         gen_idx += 1
 
@@ -371,7 +396,13 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
         
         # Use a line plot instead of bars for better readability on long runs
         ax.plot(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2, linewidth=2)
-        ax.fill_between(xs, avg_per_batch, alpha=0.2, color=BAR_COLOR, zorder=1)
+        
+        # Add the shaded 95% Confidence Interval band
+        lower_bound = np.array(avg_per_batch) - np.array(ci_per_batch)
+        upper_bound = np.array(avg_per_batch) + np.array(ci_per_batch)
+        ax.fill_between(xs, lower_bound, upper_bound, alpha=0.2, color=BAR_COLOR, zorder=1, label="95% CI (Avg)")
+        
+        ax.plot(xs, median_per_batch, color="#2ca02c", alpha=0.9, linestyle="--", label="Median Accuracy", zorder=2, linewidth=2)
         
         ax.plot(xs, best_per_batch, color=ACCENT1, linewidth=2.5, marker="D",
                 markersize=4, label="Best Accuracy", zorder=3)
@@ -577,8 +608,9 @@ def main():
         target_ts = sys.argv[1]
         
     # Use source log timestamp so visualizations correlate with their experiment
-    timestamp  = _extract_log_timestamp(target_ts)
-    run_dir    = os.path.join(VIZ_ROOT, f"run_{timestamp}")
+    timestamp, is_cifar100 = _extract_log_timestamp(target_ts)
+    prefix = "cifar100_" if is_cifar100 else ""
+    run_dir    = os.path.join(VIZ_ROOT, f"run_{prefix}{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")
 
@@ -586,7 +618,7 @@ def main():
     os.makedirs(ft_dir, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"  visualize_training.py — run: {timestamp}")
+    print(f"  visualize_meta_generation.py — run: {timestamp}")
     print(f"  Output root: {os.path.relpath(run_dir, BASE_DIR)}")
     print(f"{'='*60}\n")
 
@@ -600,6 +632,8 @@ def main():
     print("  Generating GA evolution plots …")
     plot_generation_accuracy(records,     ga_dir, saved_files)
     plot_time_per_generation(records,     ga_dir, saved_files)
+    plot_population_diversity(records,    ga_dir, saved_files)
+    plot_best_vs_avg_accuracy(records,    ga_dir, saved_files)
 
     # ── Fine-tuning ─────────────────────────────────────────────────────────
     print("\n[2/2] Loading LLM evolution logs …")

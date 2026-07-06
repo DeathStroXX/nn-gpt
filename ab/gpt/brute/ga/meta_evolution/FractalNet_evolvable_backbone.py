@@ -9,7 +9,7 @@ SEARCH_SPACE = {
     
     # Core Architecture Size
     'base_channels': [16, 32, 64, 128], 
-    'n_blocks': [2, 3, 4, 5],                
+    'n_blocks': [2, 3, 4],                
     
     # Stochastic & Regularization
     'dropout_prob': [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
