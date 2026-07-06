@@ -2,6 +2,17 @@ import torch
 import torch.nn as nn
 from typing import List
 
+# --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
+# LR: 0.005
+# Momentum: 0.75
+# Activation: SiLU
+# Kernel: 5
+# Pooling: Max
+# Conv Type: Depthwise
+# Norm Type: BatchNorm
+# Optimizer: AdamW
+# FC Dropout: 0.2
+
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
     return {'lr', 'momentum'}
@@ -19,22 +30,33 @@ class FractalDropPath(nn.Module):
         mask = torch.bernoulli(torch.full((n,), 1 - self.drop_prob, device=inputs[0].device))
         if mask.sum() == 0: 
             mask[torch.randint(0, n, (1,)).item()] = 1.0
-        active = [inp for inp, m in zip(inputs, mask) if m > 0]
+        active =[inp for inp, m in zip(inputs, mask) if m > 0]
         return torch.stack(active).mean(dim=0)
 
 class FractalBlock(nn.Module):
     def __init__(self, n_columns: int, channels: int, dropout_prob: float):
         super().__init__()
-        self.n_columns = n_columns
+        self.n_columns = int(n_columns)
+        channels = int(channels)  
+
+        activation_layer = nn.SiLU(inplace=True)
+        conv_layer = nn.Sequential(
+    nn.Conv2d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False),
+    nn.Conv2d(channels, channels, kernel_size=1, bias=False)
+)
+        norm_layer = nn.BatchNorm2d(channels)
+
+        # Assemble Convolutional Sequence
         self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True)
+            conv_layer,
+            norm_layer,
+            activation_layer
         )
-        if n_columns > 1:
-            self.left = FractalBlock(n_columns - 1, channels, dropout_prob)
-            self.right_1 = FractalBlock(n_columns - 1, channels, dropout_prob)
-            self.right_2 = FractalBlock(n_columns - 1, channels, dropout_prob)
+
+        if self.n_columns > 1:
+            self.left = FractalBlock(self.n_columns - 1, channels, dropout_prob)
+            self.right_1 = FractalBlock(self.n_columns - 1, channels, dropout_prob)
+            self.right_2 = FractalBlock(self.n_columns - 1, channels, dropout_prob)
             self.join = FractalDropPath(drop_prob=dropout_prob)
 
     def forward(self, x):
@@ -49,25 +71,28 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.device = device
 
-        c_in = 3  # Force 3 input channels for CIFAR-10 / color data
+        c_in = 3 
         n_classes = out_shape[0] if out_shape else 10
+        start_chan = int(32)  
 
         self.entry = nn.Sequential(
-            nn.Conv2d(c_in, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(c_in, start_chan, kernel_size=3, padding=1),
+            nn.BatchNorm2d(start_chan),
             nn.ReLU(inplace=True)
         )
 
-        # Dynamically build 2 fractal block(s) with channel doubling
         blocks = []
         pools = []
-        trans_layers = []
-        cur_chan = 32
-        for i in range(2):
-            blocks.append(FractalBlock(1, cur_chan, 0.2))
+        trans_layers =[]
+        cur_chan = start_chan
+        total_blocks = int(3)
+
+        for i in range(total_blocks):
+            blocks.append(FractalBlock(int(3), cur_chan, 0.2))
             pools.append(nn.MaxPool2d(2))
-            if i < 2 - 1:
-                next_chan = cur_chan * 2
+
+            if i < total_blocks - 1:
+                next_chan = int(cur_chan * 2) 
                 trans_layers.append(nn.Sequential(
                     nn.Conv2d(cur_chan, next_chan, kernel_size=1),
                     nn.BatchNorm2d(next_chan),
@@ -79,12 +104,13 @@ class Net(nn.Module):
 
         self.blocks = nn.ModuleList(blocks)
         self.pools = nn.ModuleList(pools)
-        self.trans_layers = nn.ModuleList(
-            [t for t in trans_layers if t is not None]
-        )
+        self.trans_layers = nn.ModuleList([t for t in trans_layers if t is not None])
         self.final_channels = cur_chan
 
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Regularization before classifier head
+        self.fc_dropout = nn.Dropout(p=0.2)
         self.fc = nn.Linear(self.final_channels, n_classes)
         self.to(device)
 
@@ -99,23 +125,20 @@ class Net(nn.Module):
                 t_idx += 1
         x = self.global_pool(x)
         x = x.flatten(1)
+
+        x = self.fc_dropout(x)
         x = self.fc(x)
         return x
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(
-            self.parameters(), 
-            lr=prm['lr'],       
-            momentum=prm['momentum']
-        )
-        self.max_batches = prm.get('max_batches', None)  # None = full dataset
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], betas=(prm['momentum'], 0.999), weight_decay=1e-4)
+        self.max_batches = prm.get('max_batches', None)
         return self.optimizer
 
     def learn(self, train_data):
         self.train()
         for i, (inputs, labels) in enumerate(train_data):
-            # if self.max_batches and i >= self.max_batches: break  # Controlled via prm['max_batches']
             if self.max_batches is not None and i >= self.max_batches: break
             inputs, labels = inputs.to(self.device), labels.to(self.device)
             self.optimizer.zero_grad()

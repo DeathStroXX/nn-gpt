@@ -6,12 +6,24 @@ __pycache__/
 # Local Experiment Artifacts
 ga_fractal_arch/
 stats/
+ga_fractal_arch1/
+stats1/
+stats_plain_GA/
+ga_fractal_arch_plain_GA/
+baseline_stats/
+ga_fractal_arch_plain_GA1/
+baseline_stats1/
+baseline_ga_fractal_arch/
+
+baseline_stats1/
+baseline_ga_fractal_arch1/
+
 out/
 fine_tuned_adapter/
 ga_history_backup/
-# Agent Skills & Metadata
-# .agent/
-.agents/
+logs/
+*.jsonl
+
 # Checkpoints
 fractal_ga_ckpt.pkl
 visualizations/

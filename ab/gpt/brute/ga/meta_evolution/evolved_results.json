@@ -1,0 +1,13 @@
+{
+    "peak_accuracy": 68.06,
+    "top3_mean": 67.7,
+    "archive_size": 16,
+    "fitness_history": [
+        67.92,
+        67.92,
+        67.92,
+        68.06,
+        68.06
+    ],
+    "total_generations": 25
+}

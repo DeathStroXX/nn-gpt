@@ -93,7 +93,7 @@ class LocalLLMLoader:
                 print(f"[LoRA] Adapter directory exists at {adapter_path} but no weight files found. Initializing fresh adapters...")
             else:
                 print("[LoRA] No adapter directory found. Initializing fresh adapters...")
-            # Target modules for DeepSeek
+            # Target modules for Qwen2.5 (same as DeepSeek — both Llama-style)
             target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
             
             peft_config = LoraConfig(
@@ -116,6 +116,11 @@ class LocalLLMLoader:
             prompt, return_tensors="pt", truncation=True,
             max_length=self.config.get("context_length", 4096)
         )
+        
+        # Add context length warning
+        num_tokens = inputs.input_ids.shape[1]
+        if num_tokens > 3500:
+            print(f"[WARN] Prompt is very large ({num_tokens} tokens). Nearing 4096 limit, which may cause truncation and mode collapse.")
         if torch.cuda.is_available():
             inputs = inputs.to("cuda")
         
@@ -148,11 +153,16 @@ class LocalLLMLoader:
         print(f"[LoRA] Training on {len(training_data)} examples...")
         self.model.train()
         
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
+        # optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-4) # Higher LR for quick adaptation?
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-5) # Lowered: 2e-4 was causing mode collapse
+        
+        accumulation_steps = min(4, len(training_data)) # Accumulate over up to 4 examples
         
         for epoch in range(epochs):
             total_loss = 0
-            for item in training_data:
+            optimizer.zero_grad()
+            
+            for i, item in enumerate(training_data):
                 # Format: "Prompt... \n Completion..."
                 full_text = item['prompt'] + "\n" + item['completion']
                 
@@ -161,15 +171,38 @@ class LocalLLMLoader:
                 if torch.cuda.is_available():
                     inputs = inputs.to("cuda")
                 
-                # Causal LM: Labels = Inputs
-                outputs = self.model(**inputs, labels=inputs["input_ids"])
-                loss = outputs.loss
+                # --- Loss Masking: only compute loss on completion tokens ---
+                # Tokenize prompt alone to find where completion starts
+                prompt_tokens = self.tokenizer(item['prompt'] + "\n", return_tensors="pt", truncation=True, max_length=self.config.get("context_length", 4096))
+                prompt_length = prompt_tokens["input_ids"].shape[1]
                 
+                labels = inputs["input_ids"].clone()
+                # Safeguard: Don't mask out the entire sequence if the prompt got truncated
+                mask_length = min(prompt_length, labels.shape[1] - 1)
+                labels[0, :mask_length] = -100  # Mask prompt tokens from loss
+                
+                # # Causal LM: Labels = Inputs (old: trained on full prompt+completion)
+                # outputs = self.model(**inputs, labels=inputs["input_ids"])
+                outputs = self.model(**inputs, labels=labels)
+                
+                # Scale the loss since we are accumulating
+                loss = outputs.loss / accumulation_steps
+                
+                # Safeguard: Skip if loss is NaN or Inf to prevent adapter corruption
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[WARN] Loss is {loss.item()}. Skipping gradient update for this example to prevent mode collapse.")
+                    continue
+                    
                 loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
                 
-                total_loss += loss.item()
+                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(training_data):
+                    # Gradient clipping to prevent exploding gradients
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                
+                # Re-scale loss for reporting total_loss
+                total_loss += loss.item() * accumulation_steps
                 
             avg_loss = total_loss / len(training_data)
             print(f"[LoRA] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
