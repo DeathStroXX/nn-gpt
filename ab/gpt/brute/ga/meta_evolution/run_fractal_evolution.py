@@ -38,7 +38,11 @@ import torch
 from ab.gpt.brute.ga.meta_evolution.modified_GA_cifar10.genetic_algorithm_evolved import GeneticAlgorithm
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
-
+import ab.nn.api as nn_dataset
+import pandas as pd
+# MONKEYPATCH: Bypass the massive remote database download inside Eval.py
+nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
+nn_dataset.data.cache_clear = lambda: None
 import logging
 
 # Configure logging to be simpler (remove timestamps for cleaner output)
@@ -541,7 +545,7 @@ if __name__ == "__main__":
     # (meta_evolver.py handles its own visualization at the end)
     if _standalone_mode:
         try:
-            from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
+            from ab.gpt.brute.ga.meta_evolution.visualize_baseline_generations import main as generate_plots
             print("\n=== Generating Visualizations ===")
             generate_plots()
         except Exception as e:

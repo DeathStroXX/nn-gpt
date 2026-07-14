@@ -129,11 +129,15 @@ def main():
     # timestamp = log_basename.replace("baseline_evaluations_", "").replace(".jsonl", "")
     # plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{timestamp}")
     if "baseline_evaluations_" in log_basename:
-        timestamp = log_basename.replace("baseline_evaluations_cifar10_", "").replace("baseline_evaluations_", "").replace(".jsonl", "")
-        plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{timestamp}")
+        dataset = "cifar100" if "cifar100" in log_basename else ("cifar10" if "cifar10" in log_basename else "")
+        timestamp = log_basename.replace("baseline_evaluations_cifar100_", "").replace("baseline_evaluations_cifar10_", "").replace("baseline_evaluations_", "").replace(".jsonl", "")
+        prefix = f"baseline_{dataset}_" if dataset else "baseline_"
+        plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
     elif "ga_evaluations_" in log_basename:
-        timestamp = log_basename.replace("ga_evaluations_", "").replace(".jsonl", "")
-        plot_dir = os.path.join(BASE_DIR, "visualizations", f"run_{timestamp}")
+        dataset = "cifar100" if "cifar100" in log_basename else ("cifar10" if "cifar10" in log_basename else "")
+        timestamp = log_basename.replace("ga_evaluations_cifar100_", "").replace("ga_evaluations_cifar10_", "").replace("ga_evaluations_", "").replace(".jsonl", "")
+        prefix = f"run_{dataset}_" if dataset else "run_"
+        plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
     else:
         timestamp = log_basename.replace(".jsonl", "")
         plot_dir = os.path.join(BASE_DIR, "visualizations", f"run_{timestamp}")

@@ -60,16 +60,28 @@ class GeneticAlgorithm:
             except: pass
         return 0, None
 
+    # --- START HELPER FUNCTIONS ---
+    def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
+        if gene_index < crossover_point:
+            return parent1_value
+        return parent2_value
+
+    def mutate_gene(self, gene_name, current_value, possible_values):
+        if possible_values:
+            return random.choice(possible_values)
+        return current_value
+
+    def select_competitor(self, competitors):
+        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -1)
+    # --- END HELPER FUNCTIONS ---
+
     # --- START DUMB BASELINE: CROSSOVER ---
     def _crossover(self, parent1_chromo, parent2_chromo):
         child_chromo = {}
         genes = list(self.search_space.keys())
         point = random.randint(1, len(genes) - 1)
         for i, gene in enumerate(genes):
-            if i < point:
-                child_chromo[gene] = parent1_chromo[gene]
-            else:
-                child_chromo[gene] = parent2_chromo[gene]
+            child_chromo[gene] = self.combine_genes(gene, parent1_chromo[gene], parent2_chromo[gene], point, i, len(genes))
         return child_chromo
     # --- END DUMB BASELINE: CROSSOVER ---
 
@@ -79,8 +91,7 @@ class GeneticAlgorithm:
         for gene in self.search_space.keys():
             if random.random() < self.mutation_rate:
                 possibles = [v for v in self.search_space[gene] if v != mutated_chromo[gene]]
-                if possibles:
-                    mutated_chromo[gene] = random.choice(possibles)
+                mutated_chromo[gene] = self.mutate_gene(gene, mutated_chromo[gene], possibles)
         return mutated_chromo
     # --- END DUMB BASELINE: MUTATION ---
 
@@ -88,7 +99,7 @@ class GeneticAlgorithm:
     def _selection(self):
         k = 3
         competitors = random.sample(self.population, min(k, len(self.population)))
-        return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -1)
+        return self.select_competitor(competitors)
     # --- END DUMB BASELINE: SELECTION ---
 
     def run(self, num_generations, fitness_function):

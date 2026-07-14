@@ -19,10 +19,16 @@ kubectl logs -f job/nngpt-fractal-meta-evo-clone3-cifar10
 kubectl delete -f /shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/meta_evol_tune_nngpt.json
 ```
 
-**To delete existing .pkl files (force fresh restart):**
+**To delete existing .pkl files (force fresh restart of GA population):**
 ```bash
 rm -f /shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/GenFractal_ckpt_cifar10.pkl
 rm -f /shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/GenFractal_ckpt.pkl
+```
+
+**To delete existing LLM fine-tuned weights (force fresh restart of LLM's memory):**
+```bash
+rm -rf /shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/fine_tuned_adapter_cifar10
+rm -rf /shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt/ab/gpt/brute/ga/meta_evolution/fine_tuned_adapter
 ```
 
 ---
