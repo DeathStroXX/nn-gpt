@@ -35,10 +35,45 @@ def suppress_output():
             sys.stderr = old_stderr
 
 import torch
-from ab.gpt.brute.ga.meta_evolution.genetic_algorithm_cifar100 import GeneticAlgorithm
+from ab.gpt.brute.ga.meta_evolution.modified_GA_cifar100.genetic_algorithm_evolved_cifar100 import GeneticAlgorithm
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
+import ab.nn.api as nn_dataset
+import pandas as pd
+# MONKEYPATCH: Bypass the massive remote database download inside Eval.py
+nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
+nn_dataset.data.cache_clear = lambda: None
 
+# MONKEYPATCH 2: Fix cross-pod race condition in Eval's isolated temp module directory.
+# Multiple pods share the same volume and can have the same PID (e.g., PID 306). We inject a UUID.
+import ab.gpt.util.Eval as eval_module
+import uuid
+from pathlib import Path
+
+@contextmanager
+def safe_isolated_eval_tmp_modules():
+    import ab.nn.util.Train as train_runtime
+    from ab.nn.util.Const import ab_root_path
+    
+    original_out = getattr(train_runtime, 'out', None)
+    if not isinstance(original_out, str) or not original_out:
+        yield
+        return
+
+    isolated_out = f"{original_out}_nneval_tmp_{uuid.uuid4().hex[:8]}"
+    isolated_root = Path(ab_root_path) / isolated_out
+    train_runtime.out = isolated_out
+    try:
+        yield
+    finally:
+        train_runtime.out = original_out
+        stale_prefix = f"{isolated_out}."
+        for module_name in tuple(sys.modules):
+            if module_name == isolated_out or module_name.startswith(stale_prefix):
+                sys.modules.pop(module_name, None)
+        shutil.rmtree(isolated_root, ignore_errors=True)
+
+eval_module._isolated_eval_tmp_modules = safe_isolated_eval_tmp_modules
 import logging
 
 # Configure logging to be simpler (remove timestamps for cleaner output)
@@ -428,7 +463,7 @@ if __name__ == "__main__":
     if not os.environ.get("GA_EVAL_LOG"):
         _standalone_mode = True
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        logs_dir = os.path.join(BASE_DIR, "logs")
+        logs_dir = os.path.join(BASE_DIR, "logs_cifar100")
         os.makedirs(logs_dir, exist_ok=True)
         os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_cifar100_{run_ts}.jsonl")
         print(f"[LOG] GA eval log: {os.environ['GA_EVAL_LOG']}")

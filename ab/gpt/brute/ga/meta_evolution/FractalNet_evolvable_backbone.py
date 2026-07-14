@@ -5,10 +5,10 @@ import textwrap
 
 # --- 1. SEARCH SPACE ---
 SEARCH_SPACE = {
-    'n_columns': [2, 3, 4, 5],               
+    'n_columns': [2, 3, 4],               
     
     # Core Architecture Size
-    'base_channels': [16, 32, 64, 128], 
+    'base_channels': [16, 32, 64], 
     'n_blocks': [2, 3, 4],                
     
     # Stochastic & Regularization

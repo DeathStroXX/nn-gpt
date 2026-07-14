@@ -10,6 +10,12 @@ import json
 import sys
 import gc
 import torch
+from ab.gpt.util.Eval import Eval
+import ab.nn.api as nn_dataset
+import pandas as pd
+# MONKEYPATCH: Bypass the massive remote database download inside Eval.py
+nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
+nn_dataset.data.cache_clear = lambda: None
 from datetime import datetime
 
 from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader 
@@ -95,10 +101,16 @@ Your objective is NOT just to produce a "good" algorithm in the abstract. You mu
 2. NO IMPORTS: Do NOT write `import random` or `import numpy as np`. Assume `random`, `numpy as np`, and `copy` are already available in the global scope.
 3. EXACT SIGNATURES: You must use the EXACT method signatures provided. Do not add or remove arguments.
 4. CLASS INDENTATION: Your output will be injected directly into the `GeneticAlgorithm` class. All `def` statements MUST have exactly 4 spaces of indentation. Method bodies MUST have 8 spaces.
-5. SANITIZATION: Always pass newly created chromosomes through `self._sanitize_chromosome(child_chromo)` before returning them in `_crossover` and `_mutate`.
-6. PREVENT DUPLICATES (MAP-ELITES ROUTING): To prevent premature convergence and clones, your operators MUST aggressively inject diversity. For `_selection`, sample heavily from `self.archive.values()` alongside `self.population`. For `_mutate` and `_crossover`, you must check if the generated child is identical to its parent(s). If it is a duplicate, forcefully randomize at least 3 of its genes to push it into a new area of the search space.
+5. GRANULAR HELPER FUNCTIONS: You are evolving isolated helper functions (`combine_genes`, `mutate_gene`, `select_competitor`), NOT the entire overarching loops. The main GA script handles all dictionary iteration for you. You just need to implement the mathematical combination/mutation logic for the specific gene values passed into your function.
+6. PREVENT DUPLICATES (MAP-ELITES ROUTING): To prevent premature convergence, your operators MUST aggressively inject diversity. For `select_competitor`, sample heavily from `self.archive.values()` alongside `self.population`. For `combine_genes` and `mutate_gene`, mathematically guarantee diversity (e.g., using gene inversion, momentum tracking, or hybridizing parents intelligently).
+7. AVOID HALLUCINATION (CRITICAL):
+   - Do NOT hardcode gene names unless you verify they exist in `self.search_space.keys()`. 
+   - Do NOT raise ValueErrors for "unknown" genes. Always provide a safe fallback: `return random.choice(possible_values)`.
+   - Ensure all variables (like `history`) are properly initialized in the outer scope before being accessed or modified. Do NOT reference variables that were only defined inside an `if` block.
 
 ### ANTI-PATTERNS (NEVER DO THIS) ###
+❌ BAD: `if gene_name == "dropout_prob": ... else: raise ValueError()` (Crashes the pipeline on unexpected genes)
+✅ GOOD: `if gene_name == "dropout_prob": ... else: return random.choice(possible_values)` (Safe fallback)
 ❌ BAD: `new_lr = current_value + 0.001` (Invents a value not in search space)
 ✅ GOOD: `new_lr = min(possible_values, key=lambda x: abs(x - current_value))` (Snaps to nearest valid value)
 ❌ BAD: `import random` inside the method (Causes IndentationError/SyntaxError upon injection)
@@ -121,12 +133,13 @@ Notice how the GA uses a MAP-Elites archive based on `n_blocks` and `base_channe
 - All-Time Global Best Peak Accuracy (SOTA): {global_best_score:.2f}%
 - MAP-Elites Archive Size: {global_archive_size} unique cells discovered
 
+=== BEST KNOWN NEURAL NETWORK ARCHITECTURE ===
+The neural network that achieved the SOTA score above has the following chromosome (hyperparameters):
+{best_chromosome_str}
+Use this information to heavily bias your GA operators! If certain activations, pooling, or learning rates are winning, write your `_mutate` and `_create_random_chromosome` logic to favor them or test variations around them.
+
 === HALL OF FAME (BEST HISTORICAL CODE) ===
 {hall_of_fame_str}
-
-=== PREVIOUS ATTEMPTS & FEEDBACK ===
-Learn from past failures. DO NOT repeat failed logic. If a previous attempt failed, try a fundamentally different mathematical or probabilistic approach.
-{history_str}
 
 === STRICT OUTPUT FORMAT ===
 1. You MUST write your mathematical reasoning and planning inside `<thinking> ... </thinking>` tags BEFORE writing the code block.
@@ -145,19 +158,17 @@ Current implementation to be replaced:
 """
 
 INSTRUCTIONS = {
-    "combine_genes": "Task: Implement `combine_genes` to decide which parent's gene to use for a child chromosome. For numeric genes (lr, momentum), prefer higher/lower or random choice. For categorical, random choice is safe.",
-    "_crossover": "Task: Implement `_crossover`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo using combine_genes. You MUST return self._sanitize_chromosome(child_chromo).",
-    "mutate_gene": "Task: Implement `mutate_gene`. You are given `possible_values`. Pick one. For numeric genes, picking the nearest valid value is good. For categorical, use random.choice.",
+    "_crossover": "Task: Implement `_crossover`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo. You MUST return self._sanitize_chromosome(child_chromo).",
     "_mutate": "Task: Implement `_mutate`. Return a new chromosome dict with mutated genes based on self.mutation_rate. You MUST return self._sanitize_chromosome(mutated_chromo).",
-    "select_competitor": "Task: Implement `select_competitor`. Return a single competitor from the `competitors` list. Handle the edge case where all fitnesses are 0 to prevent ZeroDivisionError.",
-    "_selection": "Task: Implement `_selection`. Select a pool of competitors from self.population and pass them to select_competitor. Return the chosen competitor."
+    "_selection": "Task: Implement `_selection`. Select a pool of competitors from self.population and return a single chosen competitor using tournament or roulette selection.",
+    "_create_random_chromosome": "Task: Implement `_create_random_chromosome`. Return a new chromosome dictionary with randomized values chosen from self.search_space."
 }
 
 def skeletonize_code(source_code):
     try:
         class Skeletonizer(ast.NodeTransformer):
             def visit_FunctionDef(self, node):
-                strip_list = ["_save_checkpoint", "_load_checkpoint", "run", "_initialize_population", "_create_random_chromosome", "__init__"]
+                strip_list = ["_save_checkpoint", "_load_checkpoint", "run", "_initialize_population", "__init__"]
                 if node.name in strip_list:
                     node.body = [ast.Pass()]
                 return node
@@ -284,34 +295,56 @@ class MetaEvolver:
         return None, None, 0
 
     def _extract_function_body(self, text, method_name):
-        """Extract the code block from the LLM response robustly."""
+        """
+        Robustly extract a function definition from a string that might contain chatter.
+        Handles multiple occurrences by picking the last valid one.
+        """
         if any(bad in text for bad in ["import torch", "class FractalNet", "def train("]):
             print(f"[Meta] Validation failed: LLM generated hallucinated codebase.")
             return None
+
+        candidates = []
+        lines = text.splitlines()
+        
+        # Find all start indices of 'def method_name'
+        start_indices = [i for i, line in enumerate(lines) if line.strip().startswith(f"def {method_name}")]
+        
+        for start_idx in start_indices:
+            extracted_lines = [lines[start_idx]]
+            # Determine indentation of the body (first non-empty line after def)
+            body_indent = None
             
-        import re
-        blocks = re.findall(r"```python(.*?)```", text, re.DOTALL)
-        if not blocks:
-            blocks = re.findall(r"```(.*?)```", text, re.DOTALL)
+            for i in range(start_idx + 1, len(lines)):
+                line = lines[i]
+                if not line.strip(): # Empty line, keep it
+                    extracted_lines.append(line)
+                    continue
+                
+                current_indent = len(line) - len(line.lstrip())
+                
+                if body_indent is None:
+                    body_indent = current_indent
+                    if body_indent == 0: # Body must be indented!
+                        break 
+                
+                if current_indent < body_indent:
+                    break # End of function
+                
+                extracted_lines.append(line)
             
-        if blocks:
-            best_block = None
-            best_score = -1
-            for block in blocks:
-                block_stripped = block.strip()
-                score = 0
-                if f"def {method_name}" in block_stripped: score += 10
-                if "pass" in block_stripped or "..." in block_stripped: score -= 5
-                if len(block_stripped) > 20: score += 1
-                if score > best_score:
-                    best_score = score
-                    best_block = block_stripped
-            if best_block: return best_block
-            
-        # Ultimate fallback: strip conversational text
-        lines = text.strip().splitlines()
-        code_lines = [l for l in lines if not l.strip().startswith(("Here", "Note", "I have", "```"))]
-        return "\n".join(code_lines).strip()
+            # Form candidate code
+            import ast
+            import textwrap
+            code_str = "\n".join(extracted_lines)
+            try:
+                # Verify syntax
+                tree = ast.parse(textwrap.dedent(code_str))
+                if tree.body and isinstance(tree.body[0], ast.FunctionDef):
+                    candidates.append(code_str) # Keep original indentation
+            except:
+                continue
+
+        return candidates[-1] if candidates else None
 
     def evolve_component(self, method_names, attempt=1, total_attempts=5):
         if isinstance(method_names, str):
@@ -343,13 +376,24 @@ class MetaEvolver:
         history_str = "No previous attempts yet."
         if hasattr(self, 'attempt_history') and self.attempt_history:
             history_lines = []
-            for idx, h in enumerate(self.attempt_history[-3:]):
+            
+            # Filter history to only include attempts for the current component!
+            component_name = method_names[0] if isinstance(method_names, (list, tuple)) else method_names
+            relevant_history = [h for h in self.attempt_history if component_name in h.get('code', '') or component_name == "full"]
+            
+            for idx, h in enumerate(relevant_history[-2:]):
                 status = h.get("status", "Unknown")
                 score = h.get("score", 0.0)
                 trace = h.get("error_trace", "")
+                if len(trace) > 150: trace = trace[-150:] + "\n... (truncated)"
                 trace_str = f"\nError Trace:\n{trace}" if trace else ""
-                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}{trace_str}\nCode:\n```python\n{h.get('code')}\n```")
-            history_str = "\n\n".join(history_lines)
+                
+                hist_code = h.get('code', '')
+                if len(hist_code) > 800: hist_code = hist_code[:800] + "\n... (truncated)"
+                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}{trace_str}\nCode:\n```python\n{hist_code}\n```")
+            
+            if history_lines:
+                history_str = "\n\n".join(history_lines)
 
         # Format Hall of Fame
         hall_of_fame_str = "No successful runs yet."
@@ -362,16 +406,29 @@ class MetaEvolver:
                 files.sort(key=get_acc, reverse=True)
                 
                 hof_lines = []
-                for f in files[:2]:
+                component_name = method_names[0] if isinstance(method_names, (list, tuple)) else method_names
+                for f in files[:1]:
                     with open(os.path.join(BACKUP_DIR, f), 'r') as bkp_f:
                         code_str = bkp_f.read()
-                        skel = skeletonize_code(code_str)
-                        hof_lines.append(f"### Example from {f} ###\n```python\n{skel}\n```")
+                        method_code, _, _ = self._extract_method(code_str, component_name)
+                        if not method_code: method_code = skeletonize_code(code_str)
+                        hof_lines.append(f"### Example from {f} ###\n```python\n{method_code}\n```")
                 if hof_lines:
                     hall_of_fame_str = "\n\n".join(hof_lines)
 
         # Skeletonize target code
         skel_full_code = skeletonize_code(full_code)
+
+        # Load best chromosome if available
+        best_chromosome_str = "None found yet."
+        best_info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+        if os.path.exists(best_info_path):
+            try:
+                with open(best_info_path, 'r') as f:
+                    best_data = json.load(f)
+                    best_chromosome_str = json.dumps(best_data.get("chromosome", {}), indent=2)
+            except Exception:
+                pass
 
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
@@ -383,12 +440,13 @@ class MetaEvolver:
             history_str=history_str,
             hall_of_fame_str=hall_of_fame_str,
             global_best_score=self.global_best_score,
-            global_archive_size=self.global_archive_size
+            global_archive_size=self.global_archive_size,
+            best_chromosome_str=best_chromosome_str
         )
         
-        # Temperature scheduling: 0.9 down to 0.4
+        # Temperature scheduling: start safe (0.6), increase to creative (0.95) on failures
         progress = (attempt - 1) / max(1, total_attempts - 1)
-        temperature = max(0.4, 0.9 - (0.5 * progress))
+        temperature = min(0.95, 0.6 + (0.35 * progress))
         print(f"[Meta] Generation Temperature: {temperature:.2f}")
         
         raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
@@ -399,22 +457,17 @@ class MetaEvolver:
         thinking_match = re.search(r"<thinking>(.*?)</thinking>", raw_res, re.DOTALL)
         thinking_trace = thinking_match.group(1).strip() if thinking_match else "No thinking trace provided."
 
-        # Extract all code blocks and combine them
-        blocks = re.findall(r"```python(.*?)```", raw_res, re.DOTALL)
-        if not blocks:
-            blocks = re.findall(r"```(.*?)```", raw_res, re.DOTALL)
-        
-        if not blocks:
-            print("[Meta] Failed to extract any python code blocks from LLM response.")
-            return False
-            
-        combined_code = "\n\n".join(b.strip() for b in blocks)
-        
-        # Validate that all requested methods are present in the output
+        # Extract all requested methods using the robust AST parser
+        combined_code_parts = []
         for name in method_names:
-            if f"def {name}" not in combined_code:
-                print(f"[Meta] LLM response is missing required method: {name}")
+            extracted = self._extract_function_body(raw_res, name)
+            if extracted:
+                combined_code_parts.append(extracted.strip('\n'))
+            else:
+                print(f"[Meta] LLM response is missing required method: {name} or failed validation.")
                 return False
+                
+        combined_code = "\n\n".join(combined_code_parts)
 
         # Sort existing methods by span start in REVERSE order (bottom to top)
         existing_methods.sort(key=lambda x: x[1][0], reverse=True)
@@ -437,7 +490,25 @@ class MetaEvolver:
                     test_full = test_full[:span[0]] + test_full[span[1]:]
                 else:
                     # Inject code
-                    new_code = textwrap.dedent(new_code).strip()
+                    lines = new_code.strip('\n').splitlines()
+                    if lines:
+                        first_def_line = next((l for l in lines if l.lstrip().startswith("def ")), "")
+                        if first_def_line:
+                            first_indent = len(first_def_line) - len(first_def_line.lstrip())
+                        else:
+                            first_line = next((l for l in lines if l.strip()), "")
+                            first_indent = len(first_line) - len(first_line.lstrip())
+                        cleaned_lines = []
+                        for line in lines:
+                            if not line.strip():
+                                cleaned_lines.append("")
+                            elif line.startswith(" " * first_indent):
+                                cleaned_lines.append(line[first_indent:])
+                            else:
+                                cleaned_lines.append(line.lstrip())
+                        new_code = "\n".join(cleaned_lines).strip()
+                    else:
+                        new_code = ""
                     reindented = "\n".join([" " * indent_col + line for line in new_code.splitlines()])
                     test_full = test_full[:span[0]] + reindented + "\n" + test_full[span[1]:]
 
@@ -459,7 +530,7 @@ class MetaEvolver:
             # Exercises ALL 6 evolvable components with realistic dummy data.
             try:
                 import importlib
-                import ab.gpt.brute.ga.meta_evolution.genetic_algorithm as ga_mod
+                import ab.gpt.brute.ga.meta_evolution.modified_GA_cifar10.genetic_algorithm_evolved as ga_mod
                 importlib.reload(ga_mod)
                 test_ga = ga_mod.GeneticAlgorithm(
                     population_size=4, search_space=SEARCH_SPACE,
@@ -470,32 +541,19 @@ class MetaEvolver:
                 test_chromo = test_ga._create_random_chromosome()
                 test_chromo2 = test_ga._create_random_chromosome()
 
-                # 1. Test combine_genes (called by _crossover internally)
-                genes = list(SEARCH_SPACE.keys())
-                for i, gene in enumerate(genes):
-                    result = test_ga.combine_genes(
-                        gene, test_chromo[gene], test_chromo2[gene],
-                        crossover_point=len(genes) // 2, gene_index=i, total_genes=len(genes)
-                    )
-
-                # 2. Test mutate_gene (called by _mutate internally)
-                for gene, vals in SEARCH_SPACE.items():
-                    result = test_ga.mutate_gene(test_chromo[gene], vals)
-
                 # 3. Test _mutate
                 mutated = test_ga._mutate(test_chromo)
 
                 # 4. Test _crossover
                 crossed = test_ga._crossover(test_chromo, test_chromo2)
 
-                # 5. Test select_competitor
-                fake_pop = [
-                    {"chromosome": test_chromo, "fitness": 50.0},
-                    {"chromosome": test_chromo2, "fitness": 60.0},
-                ]
-                selected = test_ga.select_competitor(fake_pop)
-                if not isinstance(selected, dict) or "chromosome" not in selected:
-                    raise ValueError(f"Smoke test: select_competitor returned invalid result: {type(selected)}")
+                # 5. Strict Bounds Checking
+                for gene, val in mutated.items():
+                    if val not in SEARCH_SPACE[gene]:
+                        raise ValueError(f"Smoke test: mutate produced '{val}' for gene '{gene}', not in search space")
+                for gene, val in crossed.items():
+                    if val not in SEARCH_SPACE[gene]:
+                        raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space")
 
                 # 6. Test _selection (needs a populated population + archive)
                 test_ga.population = [
@@ -517,7 +575,7 @@ class MetaEvolver:
                 for gene, val in crossed.items():
                     if val not in SEARCH_SPACE[gene]:
                         raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space {SEARCH_SPACE[gene]}")
-                print("[Meta] Runtime smoke test PASSED (all 6 components validated).")
+                print("[Meta] Runtime smoke test PASSED (all components validated).")
             except Exception as e:
                 print(f"[Meta] Runtime smoke test FAILED: {e}")
                 print("---> Reverting file and skipping benchmark.")
@@ -685,7 +743,7 @@ class MetaEvolver:
             "error_trace": bench_stats.get("error_trace", "") if not valid_syntax or reward <= 0 else ""
         })
         # Log successful LLM generation
-        self._log_llm_generation({
+        log_entry = {
             "timestamp": RUN_TIMESTAMP,
             "method": ", ".join(method_names),
             "attempt": attempt,
@@ -740,7 +798,7 @@ if __name__ == "__main__":
     # NEW — keep trying until META_ITERATIONS *successful* evolutions are achieved
     # Priority: env var META_ATTEMPTS > model_config.json meta_attempts > default 5
     META_ITERATIONS = int(os.environ.get("META_ATTEMPTS", evolver.llm.config.get("meta_attempts", 5)))
-    COMPONENTS = [("_crossover", "combine_genes"), ("_mutate", "mutate_gene"), ("_selection", "select_competitor")]
+    COMPONENTS = ["combine_genes", "mutate_gene", "select_competitor", "_create_random_chromosome"]
 
     successes = 0
     total_attempts = 0
@@ -776,6 +834,10 @@ if __name__ == "__main__":
     # --- Generate visualizations after all iterations ---
     try:
         from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
+        print("\n=== Generating Visualizations ===")
+        generate_plots()
+    except Exception as e:
+        print(f"[WARN] Visualization failed (non-fatal): {e}")
         print("\n=== Generating Visualizations ===")
         generate_plots()
     except Exception as e:

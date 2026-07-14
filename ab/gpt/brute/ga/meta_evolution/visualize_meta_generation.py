@@ -106,8 +106,8 @@ def _extract_log_timestamp(target_ts=None):
     """
     if target_ts:
         target_files = glob.glob(os.path.join(BASE_DIR, "logs*", f"*{target_ts}*.jsonl"))
-        is_cifar100 = any("cifar100" in os.path.basename(f) for f in target_files)
-        return target_ts, is_cifar100
+        dataset = "cifar100" if any("cifar100" in os.path.basename(f) for f in target_files) else "cifar10"
+        return target_ts, dataset
 
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
     
@@ -131,11 +131,11 @@ def _extract_log_timestamp(target_ts=None):
             latest = max(files, key=os.path.getmtime)
             match = ts_pattern.search(os.path.basename(latest))
             if match:
-                is_cifar100 = "cifar100" in os.path.basename(latest)
-                return match.group(1), is_cifar100
+                dataset = "cifar100" if "cifar100" in os.path.basename(latest) else "cifar10"
+                return match.group(1), dataset
     
     # Final fallback: current wall-clock time
-    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), False
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), "cifar10"
 
 
 # ---------------------------------------------------------------------------
@@ -280,8 +280,8 @@ def plot_generation_accuracy(records, out_dir, saved_files):
         ax.tick_params(colors="black")
         
         if generations:
-            ax.set_xlim(1, len(generations))
-            ax.set_xticks(np.arange(0, len(generations) + 1, 20))
+            ax.set_xlim(1, max(2, len(generations)))
+            # Let matplotlib automatically handle optimal tick placement starting from 1
             
         if running_peaks:
             upper_limit = min(100, max(running_peaks) + 5)
@@ -393,6 +393,8 @@ def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(min(24, max(6, len(xs) * 0.5)), 5))
+        if xs:
+            ax.set_xlim(0, max(1, len(xs) - 1))
         
         # Use a line plot instead of bars for better readability on long runs
         ax.plot(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2, linewidth=2)
@@ -532,7 +534,7 @@ def plot_score_improvement(entries, out_dir, saved_files):
         return
 
     # Only use entries that have both score fields
-    filtered = [e for e in entries if "score" in e]
+    filtered = [e for e in entries if "score" in e and e.get("reward", 0.0) > 0]
     if not filtered:
         _warn("No 'score' fields in LLM logs — skipping score_improvement.png")
         return
@@ -565,7 +567,7 @@ def plot_peak_accuracy_over_iterations(entries, out_dir, saved_files):
     if not entries:
         _warn("No LLM log entries — skipping meta_peak_accuracy.png")
         return
-    accs = [e.get("peak_accuracy", 0.0) for e in entries]
+    accs = [e.get("peak_accuracy", 0.0) for e in entries if e.get("reward", 0.0) > 0]
     xs = list(range(1, len(accs) + 1))
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(10, 5))
@@ -608,9 +610,8 @@ def main():
         target_ts = sys.argv[1]
         
     # Use source log timestamp so visualizations correlate with their experiment
-    timestamp, is_cifar100 = _extract_log_timestamp(target_ts)
-    prefix = "cifar100_" if is_cifar100 else ""
-    run_dir    = os.path.join(VIZ_ROOT, f"run_{prefix}{timestamp}")
+    timestamp, dataset_name = _extract_log_timestamp(target_ts)
+    run_dir    = os.path.join(VIZ_ROOT, f"run_{dataset_name}_{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")
 
