@@ -74,87 +74,35 @@ BENCH_POP = int(os.environ.get("POPULATION_SIZE", 10))
 # Format the search space so the LLM understands the exact gene constraints
 SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 
-# # [ORIGINAL BASE_PROMPT_TEMPLATE — commented out 2026-05-24]
-# BASE_PROMPT_TEMPLATE = """
-# You are an expert AI researcher fine-tuning a Genetic Algorithm (GA)...
-# === SEARCH SPACE === ... === STRICT OUTPUT FORMAT ===
-# 1. Output ONLY the python code...
-# """
-# # [END ORIGINAL]
-
 BASE_PROMPT_TEMPLATE = """
-### ROLE & OBJECTIVE ###
-You are an elite AI Research Engineer and Evolutionary Computation Expert. 
-Your task is to rewrite the core evolutionary operators of a Quality-Diversity Genetic Algorithm (MAP-Elites) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
-Your generated code will be AUTOMATICALLY INJECTED into a production Python class via string replacement. Any syntax error, hallucinated import, or invalid indentation will crash the entire pipeline.
-
-Your objective is NOT just to produce a "good" algorithm in the abstract. You must propose crossover and mutation strategies that will theoretically expand the frontier of what the GA has seen:
-1. Break the Global SOTA peak accuracy.
-2. Discover novel, high-performing architectures to populate empty cells in the MAP-Elites Behavioral Archive.
-
-### VITAL CONTEXT ###
-- 1-EPOCH SPEEDRUN: To save compute, every generated architecture is evaluated by training for exactly 1 epoch (782 batches). Your operators must prioritize architectures and hyperparameter combinations that favor extreme fast-convergence.
-- ACTIVE STOCHASTIC DEPTH: The Search Space enforces active FractalDropPath (`dropout_prob` > 0.0). Focus on evolutionary operators that favor robust architectures capable of surviving heavy path-dropping during the short 1-epoch evaluation.
-
-### HARD CONSTRAINTS (CRITICAL) ###
-1. NO INVENTED VALUES: Genes are strictly discrete. You MUST ONLY select values from the provided `SEARCH_SPACE` or the `possible_values` list. NEVER use arithmetic (e.g., `val + 0.1`, `val * 2`, `random.uniform()`) to create new gene values.
-2. NO IMPORTS: Do NOT write `import random` or `import numpy as np`. Assume `random`, `numpy as np`, and `copy` are already available in the global scope.
-3. EXACT SIGNATURES: You must use the EXACT method signatures provided. Do not add or remove arguments.
-4. CLASS INDENTATION: Your output will be injected directly into the `GeneticAlgorithm` class. All `def` statements MUST have exactly 4 spaces of indentation. Method bodies MUST have 8 spaces.
-5. GRANULAR HELPER FUNCTIONS: You are evolving isolated helper functions (`combine_genes`, `mutate_gene`, `select_competitor`), NOT the entire overarching loops. The main GA script handles all dictionary iteration for you. You just need to implement the mathematical combination/mutation logic for the specific gene values passed into your function.
-6. PREVENT DUPLICATES (MAP-ELITES ROUTING): To prevent premature convergence, your operators MUST aggressively inject diversity. For `select_competitor`, sample heavily from `self.archive.values()` alongside `self.population`. For `combine_genes` and `mutate_gene`, mathematically guarantee diversity (e.g., using gene inversion, momentum tracking, or hybridizing parents intelligently).
-7. AVOID HALLUCINATION (CRITICAL):
-   - Do NOT hardcode gene names unless you verify they exist in `self.search_space.keys()`. 
-   - Do NOT raise ValueErrors for "unknown" genes. Always provide a safe fallback: `return random.choice(possible_values)`.
-   - Ensure all variables (like `history`) are properly initialized in the outer scope before being accessed or modified. Do NOT reference variables that were only defined inside an `if` block.
-
-### ANTI-PATTERNS (NEVER DO THIS) ###
-❌ BAD: `if gene_name == "dropout_prob": ... else: raise ValueError()` (Crashes the pipeline on unexpected genes)
-✅ GOOD: `if gene_name == "dropout_prob": ... else: return random.choice(possible_values)` (Safe fallback)
-❌ BAD: `new_lr = current_value + 0.001` (Invents a value not in search space)
-✅ GOOD: `new_lr = min(possible_values, key=lambda x: abs(x - current_value))` (Snaps to nearest valid value)
-❌ BAD: `import random` inside the method (Causes IndentationError/SyntaxError upon injection)
-✅ GOOD: Just use `random.choice()` directly.
-❌ BAD: `total_fitness = sum(...); prob = fit / total_fitness` (Crashes if all fitnesses are 0)
-✅ GOOD: Add a fallback: `if total_fitness <= 0: return random.choice(competitors)`
+You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-10.
 
 === SEARCH SPACE ===
-The GA optimizes the following discrete SEARCH_SPACE:
+The GA optimizes the following SEARCH_SPACE:
 {search_space}
 
-=== FULL CLASS CONTEXT ===
-Here is the current full implementation of the GeneticAlgorithm class for your reference.
-Notice how the GA uses a MAP-Elites archive based on `n_blocks` and `base_channels`.
-<full_code>
+=== GA SCRIPT CONTEXT (READ-ONLY) ===
+Below is the FULL CODE of the current Genetic Algorithm. 
+Study it to understand the class variables (`self.population`, `self.search_space`, etc.) and helper methods (`self._coerce_gene_value`, etc.).
+DO NOT rewrite this script. It is strictly for context.
+
+<full_script>
 {full_code}
-</full_code>
-
-=== CURRENT SOTA & ARCHIVE FRONTIER ===
-- All-Time Global Best Peak Accuracy (SOTA): {global_best_score:.2f}%
-- MAP-Elites Archive Size: {global_archive_size} unique cells discovered
-
-=== BEST KNOWN NEURAL NETWORK ARCHITECTURE ===
-The neural network that achieved the SOTA score above has the following chromosome (hyperparameters):
-{best_chromosome_str}
-Use this information to heavily bias your GA operators! If certain activations, pooling, or learning rates are winning, write your `_mutate` and `_create_random_chromosome` logic to favor them or test variations around them.
-
-=== HALL OF FAME (BEST HISTORICAL CODE) ===
-{hall_of_fame_str}
-
-=== STRICT OUTPUT FORMAT ===
-1. You MUST write your mathematical reasoning and planning inside `<thinking> ... </thinking>` tags BEFORE writing the code block.
-2. Wrap your ENTIRE Python code output in a single ```python ... ``` markdown block AFTER your thinking tags.
-3. The code inside the block MUST start exactly with `    def ` (4 spaces indent).
-4. Output the exact code for the requested method(s): `{method_names}`.
+</full_script>
 
 === YOUR SPECIFIC TASK ===
-You must rewrite the following component(s): `{method_names}`
+You must intelligently improve ONLY the following specific function(s): `{method_names}`.
 {task_specific_instructions}
 
-Current implementation to be replaced:
+Current implementation:
 <current_function>
 {code}
 </current_function>
+
+=== STRICT OUTPUT FORMAT ===
+1. Output ONLY the python code for the function(s).
+2. Do not include introductory or concluding text.
+3. Ensure it is indented by 4 spaces exactly.
 """
 
 INSTRUCTIONS = {
@@ -186,10 +134,21 @@ class MetaEvolver:
         self.llm = LocalLLMLoader(model_path, use_quantization=True, adapter_path=ADAPTER_SAVE_PATH)
         os.makedirs(BACKUP_DIR, exist_ok=True)
         
-        # print("[Meta] Running Baseline...")
-        # self.baseline_score = self.run_benchmark()
-        # print(f"[Meta] Baseline Score: {self.baseline_score:.4f}")
         self.baseline_score = 0.0
+        best_info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+        if os.path.exists(best_info_path):
+            try:
+                with open(best_info_path, 'r') as f:
+                    best_data = json.load(f)
+                    self.baseline_score = float(best_data.get("peak_accuracy", 0.0))
+                    print(f"[Meta] Loaded Baseline Score: {self.baseline_score:.2f}%")
+            except Exception:
+                pass
+        
+        if self.baseline_score == 0.0:
+            print("[Meta] Running Baseline Benchmark...")
+            self.baseline_score = self.run_benchmark()["peak_accuracy"]
+            print(f"[Meta] Calculated Baseline: {self.baseline_score:.4f}%")
         self.global_best_score = 0.0
         self.global_archive_size = 0
         
@@ -416,8 +375,8 @@ class MetaEvolver:
                 if hof_lines:
                     hall_of_fame_str = "\n\n".join(hof_lines)
 
-        # Skeletonize target code
-        skel_full_code = skeletonize_code(full_code)
+        # Provide full intact code instead of skeletonizing
+        skel_full_code = full_code
 
         # Load best chromosome if available
         best_chromosome_str = "None found yet."
@@ -436,17 +395,11 @@ class MetaEvolver:
             full_code=skel_full_code,
             method_names=", ".join(method_names),
             task_specific_instructions="\n".join([INSTRUCTIONS.get(n, "") for n in method_names]),
-            code=orig_code,
-            history_str=history_str,
-            hall_of_fame_str=hall_of_fame_str,
-            global_best_score=self.global_best_score,
-            global_archive_size=self.global_archive_size,
-            best_chromosome_str=best_chromosome_str
+            code=orig_code
         )
         
-        # Temperature scheduling: start safe (0.6), increase to creative (0.95) on failures
-        progress = (attempt - 1) / max(1, total_attempts - 1)
-        temperature = min(0.95, 0.6 + (0.35 * progress))
+        # Flat temperature as in June 17 setup
+        temperature = 0.8
         print(f"[Meta] Generation Temperature: {temperature:.2f}")
         
         raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
@@ -597,6 +550,7 @@ class MetaEvolver:
         reward = calculate_meta_reward(
             current_score=new_score, 
             best_ever_score=self.global_best_score, 
+            baseline_score=self.baseline_score,
             top3_mean=top3_mean, 
             archive_novelty=archive_novelty, 
             valid_syntax=valid_syntax
@@ -835,10 +789,10 @@ if __name__ == "__main__":
     try:
         from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
         print("\n=== Generating Visualizations ===")
-        generate_plots()
+        generate_plots(RUN_TIMESTAMP, "cifar10")
     except Exception as e:
         print(f"[WARN] Visualization failed (non-fatal): {e}")
         print("\n=== Generating Visualizations ===")
-        generate_plots()
+        generate_plots(RUN_TIMESTAMP, "cifar10")
     except Exception as e:
         print(f"[WARN] Visualization failed (non-fatal): {e}")

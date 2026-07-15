@@ -99,19 +99,45 @@ def _save(fig, path, saved_files):
 def _warn(msg):
     print(f"  [WARN]  {msg}")
 
+def _determine_dataset(filename):
+    """
+    Determine the dataset ('cifar10' or 'cifar100') from the filename using explicit conditions.
+    """
+    if "cifar100" in filename:
+        return "cifar100"
+    elif "cifar10" in filename:
+        return "cifar10"
+    else:
+        return "cifar10"
+
 def _extract_log_timestamp(target_ts=None):
     """
     Extract the experiment timestamp from source log filenames.
-    Priority: target_ts > ga_evaluations > LLM-evolution-logs > pod log > fallback to now().
+    Priority: target_ts > GA_EVAL_LOG > glob search fallback.
+    Determines dataset by checking if 'cifar100' or 'cifar10' is in the log file name.
     """
+    ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
+
+    # 1. Check if the environment variable points directly to the active log
+    env_log = os.environ.get("GA_EVAL_LOG")
+    if env_log and os.path.exists(env_log):
+        if not target_ts or target_ts in env_log:
+            base = os.path.basename(env_log)
+            dataset = _determine_dataset(base)
+            match = ts_pattern.search(base)
+            ts = match.group(1) if match else target_ts
+            return ts, dataset
+
+    # 2. If a specific timestamp is passed, find the most recent file matching it
     if target_ts:
         target_files = glob.glob(os.path.join(BASE_DIR, "logs*", f"*{target_ts}*.jsonl"))
-        dataset = "cifar100" if any("cifar100" in os.path.basename(f) for f in target_files) else "cifar10"
-        return target_ts, dataset
-
-    ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})')
+        if target_files:
+            latest = max(target_files, key=os.path.getmtime)
+            dataset = _determine_dataset(os.path.basename(latest))
+            return target_ts, dataset
+        return target_ts, "cifar10"
     
-    # Priority order of log file patterns to check
+    # 3. No target specified -> find the absolute most recent log file
     search_patterns = [
         os.path.join(BASE_DIR, "logs_cifar10", "ga_evaluations_*.jsonl"),
         os.path.join(BASE_DIR, "logs_cifar100", "ga_evaluations_*.jsonl"),
@@ -120,19 +146,20 @@ def _extract_log_timestamp(target_ts=None):
         os.path.join(LOGS_DIR, "ga_evaluations_*.jsonl"),
         os.path.join(LOGS_DIR, "LLM-evolution-logs_*.jsonl"),
         os.path.join(LOGS_DIR, "pod_*.log"),
-        # Fallback to base dir for older logs
         os.path.join(BASE_DIR, "ga_evaluations_*.jsonl"),
         os.path.join(BASE_DIR, "LLM-evolution-logs_*.jsonl"),
     ]
     
+    all_files = []
     for pattern in search_patterns:
-        files = glob.glob(pattern)
-        if files:
-            latest = max(files, key=os.path.getmtime)
-            match = ts_pattern.search(os.path.basename(latest))
-            if match:
-                dataset = "cifar100" if "cifar100" in os.path.basename(latest) else "cifar10"
-                return match.group(1), dataset
+        all_files.extend(glob.glob(pattern))
+        
+    if all_files:
+        latest = max(all_files, key=os.path.getmtime)
+        match = ts_pattern.search(os.path.basename(latest))
+        if match:
+            dataset = _determine_dataset(os.path.basename(latest))
+            return match.group(1), dataset
     
     # Final fallback: current wall-clock time
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), "cifar10"
@@ -149,7 +176,9 @@ def load_stats_records(target_ts=None):
     records = []
     if target_ts:
         log_files = [
+            os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations_cifar10_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations_cifar100_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations_{target_ts}.jsonl"),
             os.path.join(LOGS_DIR, f"ga_evaluations_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, f"ga_evaluations_{target_ts}.jsonl")
@@ -202,7 +231,9 @@ def load_llm_logs(target_ts=None):
     """
     if target_ts:
         log_files = [
+            os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs_cifar10_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs_{target_ts}.jsonl"),
+            os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs_cifar100_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs_{target_ts}.jsonl"),
             os.path.join(LOGS_DIR, f"LLM-evolution-logs_{target_ts}.jsonl"),
             os.path.join(BASE_DIR, f"LLM-evolution-logs_{target_ts}.jsonl")
@@ -306,7 +337,7 @@ def plot_population_diversity(records, out_dir, saved_files):
         _warn("No stats records found — skipping population_diversity.png")
         return
 
-    accs = [r["accuracy"] * 100 for r in records if r["accuracy"] is not None]
+    accs = [r["accuracy"] for r in records if r["accuracy"] is not None]
     if not accs:
         _warn("No accuracy values found — skipping population_diversity.png")
         return
@@ -604,13 +635,16 @@ def plot_modification_success_rate(entries, out_dir, saved_files):
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    target_ts = None
+def main(target_ts=None, target_dataset=None):
     if len(sys.argv) > 1:
         target_ts = sys.argv[1]
+    if len(sys.argv) > 2:
+        target_dataset = sys.argv[2]
         
     # Use source log timestamp so visualizations correlate with their experiment
     timestamp, dataset_name = _extract_log_timestamp(target_ts)
+    if target_dataset:
+        dataset_name = target_dataset
     run_dir    = os.path.join(VIZ_ROOT, f"run_{dataset_name}_{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")
@@ -627,7 +661,7 @@ def main():
 
     # ── GA evolution ────────────────────────────────────────────────────────
     print("[1/2] Loading stats records …")
-    records = load_stats_records(target_ts)
+    records = load_stats_records(timestamp)
     print(f"      Found {len(records)} evaluated model(s).\n")
 
     print("  Generating GA evolution plots …")
@@ -638,7 +672,7 @@ def main():
 
     # ── Fine-tuning ─────────────────────────────────────────────────────────
     print("\n[2/2] Loading LLM evolution logs …")
-    entries = load_llm_logs(target_ts)
+    entries = load_llm_logs(timestamp)
     print(f"      Found {len(entries)} log entry(ies).\n")
 
     print("  Generating fine-tuning plots …")

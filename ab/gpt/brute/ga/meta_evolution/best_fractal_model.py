@@ -3,15 +3,15 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.001
-# Momentum: 0.85
-# Activation: GELU
-# Kernel: 3
+# LR: 0.005
+# Momentum: 0.98
+# Activation: SiLU
+# Kernel: 5
 # Pooling: Max
 # Conv Type: Standard
 # Norm Type: BatchNorm
-# Optimizer: AdamW
-# FC Dropout: 0.1
+# Optimizer: SGD
+# FC Dropout: 0.2
 
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
@@ -39,8 +39,8 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        activation_layer = nn.GELU()
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        activation_layer = nn.SiLU(inplace=True)
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
@@ -137,7 +137,7 @@ class Net(nn.Module):
             dim_fused = self.features(dummy).shape[1]
         self.train()
 
-        self.fc_dropout = nn.Dropout(p=0.1)
+        self.fc_dropout = nn.Dropout(p=0.2)
         self.fc = nn.Linear(dim_fused, n_classes)
         self.to(device)
 
@@ -163,7 +163,7 @@ class Net(nn.Module):
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.optimizer = torch.optim.AdamW(self.parameters(), lr=prm['lr'], betas=(prm['momentum'], 0.999), weight_decay=1e-4)
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
         self.max_batches = prm.get('max_batches', None)
 
         total_steps = 782 if self.max_batches is None else min(self.max_batches, 782)

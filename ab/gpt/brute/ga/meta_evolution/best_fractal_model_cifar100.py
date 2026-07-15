@@ -3,15 +3,15 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.001
-# Momentum: 0.92
-# Activation: SiLU
-# Kernel: 7
+# LR: 0.005
+# Momentum: 0.75
+# Activation: GELU
+# Kernel: 5
 # Pooling: Avg
 # Conv Type: Standard
 # Norm Type: BatchNorm
-# Optimizer: RMSprop
-# FC Dropout: 0.2
+# Optimizer: SGD
+# FC Dropout: 0.1
 
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
@@ -19,7 +19,7 @@ def supported_hyperparameters():
 
 # --- Helper Classes ---
 class FractalDropPath(nn.Module):
-    def __init__(self, drop_prob: float = 0.15):
+    def __init__(self, drop_prob: float = 0.1):
         super().__init__()
         self.drop_prob = drop_prob
 
@@ -39,8 +39,8 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        activation_layer = nn.SiLU(inplace=True)
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=7, padding=3, bias=False)
+        activation_layer = nn.GELU()
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
@@ -78,10 +78,10 @@ class FractalBackbone(nn.Module):
         pools = []
         trans_layers =[]
         cur_chan = start_chan
-        total_blocks = int(2)
+        total_blocks = int(4)
 
         for i in range(total_blocks):
-            blocks.append(FractalBlock(int(2), cur_chan, 0.15))
+            blocks.append(FractalBlock(int(2), cur_chan, 0.1))
             pools.append(nn.AvgPool2d(2))
 
             if i < total_blocks - 1:
@@ -137,7 +137,7 @@ class Net(nn.Module):
             dim_fused = self.features(dummy).shape[1]
         self.train()
 
-        self.fc_dropout = nn.Dropout(p=0.2)
+        self.fc_dropout = nn.Dropout(p=0.1)
         self.fc = nn.Linear(dim_fused, n_classes)
         self.to(device)
 
@@ -163,7 +163,7 @@ class Net(nn.Module):
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.optimizer = torch.optim.RMSprop(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
         self.max_batches = prm.get('max_batches', None)
 
         total_steps = 782 if self.max_batches is None else min(self.max_batches, 782)
