@@ -34,6 +34,10 @@ def calculate_meta_reward(current_score, best_ever_score, baseline_score, top3_m
         novelty_bonus = archive_novelty * 0.5
         reward += novelty_bonus
         print(f"   [RL] TERTIARY: Archive Novelty ({archive_novelty} cells updated). Bonus: {novelty_bonus:.4f}")
+    elif archive_novelty == 0 and delta_sota <= 0:
+        stagnation_penalty = -2.0
+        reward += stagnation_penalty
+        print(f"   [RL] PENALTY: Zero Archive Novelty (Stagnation/Premature Convergence). Penalty: {stagnation_penalty:.4f}")
 
     reward = min(reward, 15.0) 
     print(f"   [RL] Total Reward: {reward:.4f}")

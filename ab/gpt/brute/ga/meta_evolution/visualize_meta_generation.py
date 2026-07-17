@@ -211,17 +211,27 @@ def load_stats_records(target_ts=None):
     return records
 
 
-def split_into_generations(entries, gen1_size=20, rest_size=15):
-    generations = []
-    if not entries: return generations
-    # Generation 1
-    generations.append(entries[:gen1_size])
-    idx = gen1_size
-    # Remaining generations
-    while idx < len(entries):
-        generations.append(entries[idx:idx + rest_size])
-        idx += rest_size
-    return generations
+def group_by_meta_iteration(records, llm_entries):
+    attempts = []
+    for d in llm_entries:
+        ts_str = d.get("fine_tune_start_time")
+        if ts_str:
+            attempts.append({
+                "attempt": d.get("attempt"),
+                "end_time": datetime.fromisoformat(ts_str),
+                "evals": []
+            })
+    attempts.append({"attempt": "Final", "end_time": datetime.max, "evals": []})
+    
+    for r in records:
+        if "timestamp" not in r: continue
+        ev_time = datetime.fromisoformat(r["timestamp"])
+        for a in attempts:
+            if ev_time <= a["end_time"]:
+                a["evals"].append(r)
+                break
+                
+    return [a for a in attempts if a["evals"]]
 
 
 def load_llm_logs(target_ts=None):
@@ -270,49 +280,52 @@ def load_llm_logs(target_ts=None):
 # GA Evolution plots
 # ---------------------------------------------------------------------------
 
-def plot_generation_accuracy(records, out_dir, saved_files):
-    if not records:
-        _warn("No stats records found — skipping generation_accuracy.png")
+def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
+    attempts = group_by_meta_iteration(records, llm_entries)
+    if not attempts:
+        _warn("No grouped records found — skipping generation_accuracy.png")
         return
         
-    generations = split_into_generations(records, 20, 15)
     gen_numbers, avg_accuracies, peak_accuracies, running_peaks = [], [], [], []
     running_peak = 0.0
     
-    for i, gen in enumerate(generations):
-        gen_num = i + 1
-        accuracies = [e.get("accuracy", 0) for e in gen]
-        if not accuracies: continue
-        avg_acc = np.mean(accuracies)
-        peak_acc = max(accuracies)
+    for a in attempts:
+        accs = [e.get("accuracy", 0) for e in a["evals"] if "accuracy" in e]
+        if not accs: continue
+        avg_acc = np.mean(accs)
+        peak_acc = max(accs)
         running_peak = max(running_peak, peak_acc)
         
-        gen_numbers.append(gen_num)
+        try: attempt_num = int(a['attempt'])
+        except ValueError: attempt_num = max(gen_numbers) + 1 if gen_numbers else 1
+        
+        gen_numbers.append(attempt_num)
         avg_accuracies.append(avg_acc)
         peak_accuracies.append(peak_acc)
         running_peaks.append(running_peak)
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(14, 7))
-        ax.plot(gen_numbers, avg_accuracies, label="Average Accuracy (per gen)",
+        ax.plot(gen_numbers, avg_accuracies, label="Average Accuracy (per Attempt)",
                 color="#3b82f6", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
-        ax.plot(gen_numbers, peak_accuracies, label="Peak Accuracy (per gen)",
+        ax.plot(gen_numbers, peak_accuracies, label="Peak Accuracy (per Attempt)",
                 color="#f97316", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
         ax.plot(gen_numbers, running_peaks, label="Running Best (cumulative)",
                 color="#10b981", linewidth=2.5, linestyle="--")
 
-        ax.set_xlabel("Generation", fontsize=13)
+        ax.set_xlabel("Meta-Iteration (Attempt)", fontsize=13)
         ax.set_ylabel("Accuracy (%)", fontsize=13)
-        ax.set_title("LLM-Guided GA: Accuracy per Generation (No Fractal Drop Path)", fontsize=15, fontweight="bold")
+        ax.set_title("LLM-Guided GA: Accuracy per Meta-Iteration", fontsize=15, fontweight="bold")
         ax.legend(fontsize=11, loc="lower right")
         
-        # Override grid and ticks to exactly match baseline visual appeal
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
         ax.tick_params(colors="black")
         
-        if generations:
-            ax.set_xlim(1, max(2, len(generations)))
-            # Let matplotlib automatically handle optimal tick placement starting from 1
+        max_x = max(gen_numbers) if gen_numbers else 5
+        xticks = list(range(0, max_x + 5, 5))
+        if 1 not in xticks: xticks.insert(1, 1)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
         if running_peaks:
             upper_limit = min(100, max(running_peaks) + 5)
@@ -332,38 +345,26 @@ def plot_generation_accuracy(records, out_dir, saved_files):
         _save(fig, path, saved_files)
 
 
-def plot_population_diversity(records, out_dir, saved_files):
-    if not records:
-        _warn("No stats records found — skipping population_diversity.png")
+def plot_population_diversity(records, llm_entries, out_dir, saved_files):
+    attempts = group_by_meta_iteration(records, llm_entries)
+    if not attempts:
+        _warn("No records found — skipping population_diversity.png")
         return
 
-    accs = [r["accuracy"] for r in records if r["accuracy"] is not None]
-    if not accs:
-        _warn("No accuracy values found — skipping population_diversity.png")
-        return
-
-    # Group into batches to simulate generation-level diversity
-    batch_size = int(os.environ.get("POPULATION_SIZE", 20))
-    elites = 5  # Elites are carried forward and not re-evaluated
-    batches, labels = [], []
-    
-    i = 0
-    gen_idx = 1
-    while i < len(accs):
-        current_batch_size = batch_size if gen_idx == 1 else (batch_size - elites)
-        chunk = accs[i:i + current_batch_size]
-        if chunk:
-            batches.append(chunk)
-            labels.append(f"{gen_idx}")
-        i += current_batch_size
-        gen_idx += 1
+    batches, positions = [], []
+    for a in attempts:
+        accs = [e["accuracy"] for e in a["evals"] if e.get("accuracy") is not None]
+        if accs:
+            batches.append(accs)
+            try: pos = int(a['attempt'])
+            except ValueError: pos = max(positions) + 1 if positions else 1
+            positions.append(pos)
 
     with plt.rc_context(PLOT_STYLE):
-        # Cap the width at 24 inches so it doesn't become too huge
         fig, ax = plt.subplots(figsize=(min(24, max(6, len(batches) * 0.5)), 5))
         bp = ax.boxplot(
             batches,
-            labels=labels,
+            positions=positions,
             patch_artist=True,
             boxprops=dict(facecolor="#2a3a6e", color=ACCENT1),
             medianprops=dict(color=ACCENT2, linewidth=2),
@@ -372,133 +373,111 @@ def plot_population_diversity(records, out_dir, saved_files):
             flierprops=dict(marker="o", color=ACCENT3, alpha=0.5, markersize=4),
         )
         
-        if len(batches) > 20:
-            step = max(1, len(batches) // 20)
-            ax.set_xticks(list(range(1, len(batches) + 1, step)))
-            ax.set_xticklabels([labels[i] for i in range(0, len(batches), step)], rotation=45, ha='right')
-        else:
-            ax.set_xticklabels(labels, rotation=45, ha='right')
+        max_x = max(positions) if positions else 5
+        xticks = list(range(0, max_x + 5, 5))
+        if 1 not in xticks: xticks.insert(1, 1)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
-        _apply_style(ax, "Population Diversity (Accuracy Spread per Generation Batch)",
-                     "Generation Batch", "Accuracy (%)")
+        _apply_style(ax, "Population Diversity per Meta-Iteration",
+                     "Meta-Iteration (Attempt)", "Accuracy (%)")
         _save(fig, os.path.join(out_dir, "population_diversity.png"), saved_files)
 
 
-def plot_best_vs_avg_accuracy(records, out_dir, saved_files):
-    if not records:
-        _warn("No stats records found — skipping best_vs_avg_accuracy.png")
+def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
+    attempts = group_by_meta_iteration(records, llm_entries)
+    if not attempts:
+        _warn("No records found — skipping best_vs_avg_accuracy.png")
         return
 
-    accs = [r["accuracy"] for r in records if r["accuracy"] is not None]
-    bests = [r.get("best_accuracy") for r in records if r.get("best_accuracy") is not None]
-    if not accs:
-        _warn("No accuracy values — skipping best_vs_avg_accuracy.png")
-        return
-
-    batch_size = int(os.environ.get("POPULATION_SIZE", 20))
-    elites = 5
-    avg_per_batch, best_per_batch, median_per_batch, ci_per_batch, gen_labels = [], [], [], [], []
+    avg_per_batch, best_per_batch, median_per_batch, ci_per_batch, xs = [], [], [], [], []
     
-    i = 0
-    gen_idx = 1
-    while i < max(len(accs), len(bests)):
-        current_batch_size = batch_size if gen_idx == 1 else (batch_size - elites)
-        chunk_acc  = accs[i:i + current_batch_size]
-        chunk_best = bests[i:i + current_batch_size] if bests else []
-        if not chunk_acc:
-            break
+    for a in attempts:
+        chunk_acc = [e["accuracy"] for e in a["evals"] if e.get("accuracy") is not None]
+        chunk_best = [e.get("best_accuracy") for e in a["evals"] if e.get("best_accuracy") is not None]
+        if not chunk_acc: continue
+        
         avg = sum(chunk_acc) / len(chunk_acc)
         avg_per_batch.append(avg)
         best_per_batch.append(max(chunk_best) if chunk_best else max(chunk_acc))
         median_per_batch.append(np.median(chunk_acc))
         
-        # Calculate 95% Confidence Interval for the mean
         std = np.std(chunk_acc, ddof=1) if len(chunk_acc) > 1 else 0
         ci = 1.96 * (std / np.sqrt(len(chunk_acc)))
         ci_per_batch.append(ci)
-        gen_labels.append(f"{gen_idx}")
-        i += current_batch_size
-        gen_idx += 1
-
-    xs = list(range(len(gen_labels)))
+        
+        try: attempt_num = int(a['attempt'])
+        except ValueError: attempt_num = max(xs) + 1 if xs else 1
+        xs.append(attempt_num)
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(min(24, max(6, len(xs) * 0.5)), 5))
         if xs:
             ax.set_xlim(0, max(1, len(xs) - 1))
         
-        # Use a line plot instead of bars for better readability on long runs
         ax.plot(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2, linewidth=2)
         
-        # Add the shaded 95% Confidence Interval band
         lower_bound = np.array(avg_per_batch) - np.array(ci_per_batch)
         upper_bound = np.array(avg_per_batch) + np.array(ci_per_batch)
         ax.fill_between(xs, lower_bound, upper_bound, alpha=0.2, color=BAR_COLOR, zorder=1, label="95% CI (Avg)")
         
         ax.plot(xs, median_per_batch, color="#2ca02c", alpha=0.9, linestyle="--", label="Median Accuracy", zorder=2, linewidth=2)
-        
-        ax.plot(xs, best_per_batch, color=ACCENT1, linewidth=2.5, marker="D",
-                markersize=4, label="Best Accuracy", zorder=3)
+        ax.plot(xs, best_per_batch, color=ACCENT1, linewidth=2.5, marker="D", markersize=4, label="Best Accuracy", zorder=3)
                 
-        if len(xs) > 20:
-            step = max(1, len(xs) // 20)
-            ax.set_xticks(xs[::step])
-            ax.set_xticklabels([gen_labels[i] for i in range(0, len(xs), step)], rotation=45, ha='right')
-        else:
-            ax.set_xticks(xs)
-            ax.set_xticklabels(gen_labels, rotation=45, ha='right')
+        max_x = max(xs) if xs else 5
+        xticks = list(range(0, max_x + 5, 5))
+        if 1 not in xticks: xticks.insert(1, 1)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
-        _apply_style(ax, "Best vs Average Accuracy per Generation Batch",
-                     "Generation Batch", "Accuracy (%)")
+        _apply_style(ax, "Best vs Average Accuracy per Meta-Iteration",
+                     "Meta-Iteration (Attempt)", "Accuracy (%)")
         ax.legend()
         _save(fig, os.path.join(out_dir, "best_vs_avg_accuracy.png"), saved_files)
 
 
-def plot_time_per_generation(records, out_dir, saved_files):
-    if not records:
-        _warn("No stats records found — skipping time_per_generation.png")
+def plot_time_per_generation(records, llm_entries, out_dir, saved_files):
+    attempts = group_by_meta_iteration(records, llm_entries)
+    if not attempts:
+        _warn("No records found — skipping time_per_generation.png")
         return
 
-    generations = split_into_generations(records, 20, 15)
     gen_numbers = []
     gen_times = []
-    prev_end_time = None
     
-    for i, gen in enumerate(generations):
-        gen_num = i + 1
-        gen_numbers.append(gen_num)
+    for a in attempts:
+        try: attempt_num = int(a['attempt'])
+        except ValueError: attempt_num = max(gen_numbers) + 1 if gen_numbers else 1
+        gen_numbers.append(attempt_num)
         
-        times = [datetime.fromisoformat(e["timestamp"]) for e in gen if "timestamp" in e]
+        times = [datetime.fromisoformat(e["timestamp"]) for e in a["evals"] if "timestamp" in e]
         if times:
-            gen_start_time = prev_end_time if prev_end_time else times[0]
-            gen_end_time = times[-1]
-            gen_duration = (gen_end_time - gen_start_time).total_seconds() / 60.0 # in minutes
-            
-            if prev_end_time is None and len(times) > 1:
+            gen_duration = (times[-1] - times[0]).total_seconds() / 60.0
+            if len(times) > 1:
                 avg_model_time = (times[-1] - times[0]).total_seconds() / (len(times) - 1)
                 gen_duration += avg_model_time / 60.0
-                
             gen_times.append(gen_duration)
-            prev_end_time = gen_end_time
         else:
             gen_times.append(0.0)
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(14, 7))
-        ax.plot(gen_numbers, gen_times, label="Time Taken (per gen)",
+        ax.plot(gen_numbers, gen_times, label="Time Taken (per Attempt)",
                 color="#a855f7", linewidth=2.0, alpha=0.9, marker="s", markersize=5)
         
-        ax.set_xlabel("Generation", fontsize=13)
+        ax.set_xlabel("Meta-Iteration (Attempt)", fontsize=13)
         ax.set_ylabel("Time Taken (Minutes)", fontsize=13)
-        ax.set_title("LLM-Guided GA: Compute Time per Generation", fontsize=15, fontweight="bold")
+        ax.set_title("LLM-Guided GA: Compute Time per Attempt", fontsize=15, fontweight="bold")
         ax.legend(fontsize=11, loc="upper right")
         
-        # Override grid and ticks to exactly match baseline visual appeal
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
         ax.tick_params(colors="black")
         
-        if generations:
-            ax.set_xlim(1, len(generations))
+        max_x = max(gen_numbers) if gen_numbers else 5
+        xticks = list(range(0, max_x + 5, 5))
+        if 1 not in xticks: xticks.insert(1, 1)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
         plt.tight_layout()
         path = os.path.join(out_dir, "time_per_generation.png")
@@ -659,25 +638,24 @@ def main(target_ts=None, target_dataset=None):
 
     saved_files = []
 
+    # ── Fine-tuning (Load First) ────────────────────────────────────────────
+    print("\n[1/2] Loading LLM evolution logs …")
+    entries = load_llm_logs(timestamp)
+    print(f"      Found {len(entries)} log entry(ies).\n")
+
     # ── GA evolution ────────────────────────────────────────────────────────
-    print("[1/2] Loading stats records …")
+    print("[2/2] Loading stats records …")
     records = load_stats_records(timestamp)
     print(f"      Found {len(records)} evaluated model(s).\n")
 
     print("  Generating GA evolution plots …")
-    plot_generation_accuracy(records,     ga_dir, saved_files)
-    plot_time_per_generation(records,     ga_dir, saved_files)
-    plot_population_diversity(records,    ga_dir, saved_files)
-    plot_best_vs_avg_accuracy(records,    ga_dir, saved_files)
-
-    # ── Fine-tuning ─────────────────────────────────────────────────────────
-    print("\n[2/2] Loading LLM evolution logs …")
-    entries = load_llm_logs(timestamp)
-    print(f"      Found {len(entries)} log entry(ies).\n")
+    plot_generation_accuracy(records, entries, ga_dir, saved_files)
+    plot_time_per_generation(records, entries, ga_dir, saved_files)
+    plot_population_diversity(records, entries, ga_dir, saved_files)
+    plot_best_vs_avg_accuracy(records, entries, ga_dir, saved_files)
 
     print("  Generating fine-tuning plots …")
     plot_reward_over_iterations(entries, ft_dir, saved_files)
-    # plot_syntax_success_rate(entries,   ft_dir, saved_files)  # Replaced by plot_modification_success_rate
     plot_score_improvement(entries,     ft_dir, saved_files)
     plot_peak_accuracy_over_iterations(entries, ft_dir, saved_files)
     plot_modification_success_rate(entries, ft_dir, saved_files)

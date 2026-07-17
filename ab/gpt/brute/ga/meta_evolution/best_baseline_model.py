@@ -3,15 +3,15 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.004
-# Momentum: 0.85
+# LR: 0.006
+# Momentum: 0.9
 # Activation: SiLU
 # Kernel: 5
 # Pooling: Max
 # Conv Type: Standard
 # Norm Type: BatchNorm
 # Optimizer: SGD
-# FC Dropout: 0.2
+# FC Dropout: 0.1
 
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
@@ -137,7 +137,7 @@ class Net(nn.Module):
             dim_fused = self.features(dummy).shape[1]
         self.train()
 
-        self.fc_dropout = nn.Dropout(p=0.2)
+        self.fc_dropout = nn.Dropout(p=0.1)
         self.fc = nn.Linear(dim_fused, n_classes)
         self.to(device)
 

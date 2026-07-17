@@ -106,9 +106,9 @@ Current implementation:
 """
 
 INSTRUCTIONS = {
-    "_crossover": "Task: Implement `_crossover`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo. You MUST return self._sanitize_chromosome(child_chromo).",
-    "_mutate": "Task: Implement `_mutate`. Return a new chromosome dict with mutated genes based on self.mutation_rate. You MUST return self._sanitize_chromosome(mutated_chromo).",
-    "_selection": "Task: Implement `_selection`. Select a pool of competitors from self.population and return a single chosen competitor using tournament or roulette selection.",
+    "combine_genes": "Task: Implement `combine_genes`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo. CRITICAL: You MUST implement strategies to maintain genetic diversity and avoid premature convergence! You MUST return self._sanitize_chromosome(child_chromo).",
+    "mutate_gene": "Task: Implement `mutate_gene`. Return a new chromosome dict with mutated genes based on self.mutation_rate. CRITICAL: You MUST ensure mutations are bold enough to explore new architectures and prevent the population from getting stuck in local minima! You MUST return self._sanitize_chromosome(mutated_chromo).",
+    "select_competitor": "Task: Implement `select_competitor`. Select a pool of competitors from self.population and return a single chosen competitor. CRITICAL: Balance elitism with exploration (e.g. tournament selection with a reasonable size) so the population doesn't instantly converge.",
     "_create_random_chromosome": "Task: Implement `_create_random_chromosome`. Return a new chromosome dictionary with randomized values chosen from self.search_space."
 }
 

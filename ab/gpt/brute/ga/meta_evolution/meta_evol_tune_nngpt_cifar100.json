@@ -28,7 +28,7 @@
               "-c"
             ],
             "args": [
-              "cd /a/mm && pip uninstall -y flash-attn && if [ ! -d \"nn-dataset\" ]; then git clone https://github.com/ABrain-One/nn-dataset; else git -C nn-dataset pull; fi && pip install \"torchao==0.15.0\" -e ./nn-dataset --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && site_pkg=$(python3 -c 'import site; print(site.getusersitepackages())') && mkdir -p /a/mm/ab/nn && cp -rn $site_pkg/ab/nn/* /a/mm/ab/nn/ || true && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100 && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_cifar100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100/pod_${RUN_TS}.log"
+              "cd /a/mm && (pip uninstall -y flash-attn || true) && pip install \"torchao==0.15.0\" --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100 && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_cifar100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100/pod_${RUN_TS}.log"
             ],
             "env": [
               {
@@ -53,7 +53,7 @@
               },
               {
                 "name": "META_ATTEMPTS",
-                "value": "10"
+                "value": "5"
               },
               {
                 "name": "PYTORCH_CUDA_ALLOC_CONF",
@@ -97,6 +97,10 @@
               {
                 "mountPath": "/a/mm/data",
                 "name": "v1"
+              },
+              {
+                "mountPath": "/a/mm/nn-dataset",
+                "name": "v2"
               }
             ]
           }
@@ -121,6 +125,13 @@
             "name": "v1",
             "hostPath": {
               "path": "/shared/local/data/a-group-automl/data",
+              "type": "Directory"
+            }
+          },
+          {
+            "name": "v2",
+            "hostPath": {
+              "path": "/shared/ssd/home/b-a-singh/Thesis/NN-DATASET/C1/nn-dataset",
               "type": "Directory"
             }
           }

@@ -45,7 +45,7 @@
                             },
                             {
                                 "name": "GENERATIONS",
-                                "value": "50"
+                                "value": "25"
                             },
                             {
                                 "name": "MUTATION_RATE",

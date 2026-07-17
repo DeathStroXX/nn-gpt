@@ -3,15 +3,15 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.004
-# Momentum: 0.85
+# LR: 0.01
+# Momentum: 0.75
 # Activation: SiLU
-# Kernel: 5
-# Pooling: Max
+# Kernel: 3
+# Pooling: Avg
 # Conv Type: Standard
 # Norm Type: BatchNorm
 # Optimizer: SGD
-# FC Dropout: 0.2
+# FC Dropout: 0.3
 
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
@@ -40,7 +40,7 @@ class FractalBlock(nn.Module):
         channels = int(channels)  
 
         activation_layer = nn.SiLU(inplace=True)
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
@@ -82,7 +82,7 @@ class FractalBackbone(nn.Module):
 
         for i in range(total_blocks):
             blocks.append(FractalBlock(int(2), cur_chan, 0.1))
-            pools.append(nn.MaxPool2d(2))
+            pools.append(nn.AvgPool2d(2))
 
             if i < total_blocks - 1:
                 next_chan = int(cur_chan * 2) 
@@ -137,7 +137,7 @@ class Net(nn.Module):
             dim_fused = self.features(dummy).shape[1]
         self.train()
 
-        self.fc_dropout = nn.Dropout(p=0.2)
+        self.fc_dropout = nn.Dropout(p=0.3)
         self.fc = nn.Linear(dim_fused, n_classes)
         self.to(device)
 
