@@ -103,7 +103,9 @@ def _determine_dataset(filename):
     """
     Determine the dataset ('cifar10' or 'cifar100') from the filename using explicit conditions.
     """
-    if "cifar100" in filename:
+    if "imagenet100" in filename:
+        return "imagenet100"
+    elif "cifar100" in filename:
         return "cifar100"
     elif "cifar10" in filename:
         return "cifar10"
@@ -126,16 +128,33 @@ def _extract_log_timestamp(target_ts=None):
             dataset = _determine_dataset(base)
             match = ts_pattern.search(base)
             ts = match.group(1) if match else target_ts
-            return ts, dataset
+            
+            model_name = ""
+            remainder = base.replace(f"ga_evaluations_{dataset}_", "").replace(f"LLM-evolution-logs_{dataset}_", "").replace(".jsonl", "")
+            parts = remainder.split("_")
+            if len(parts) > 2 and "-" in remainder:
+                model_name = "_".join(parts[:-2])
+                
+            return ts, dataset, model_name
 
     # 2. If a specific timestamp is passed, find the most recent file matching it
     if target_ts:
-        target_files = glob.glob(os.path.join(BASE_DIR, "logs*", f"*{target_ts}*.jsonl"))
-        if target_files:
-            latest = max(target_files, key=os.path.getmtime)
-            dataset = _determine_dataset(os.path.basename(latest))
-            return target_ts, dataset
-        return target_ts, "cifar10"
+        files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations_*.jsonl"))
+        for f in files:
+            if target_ts and target_ts in f:
+                base = os.path.basename(f)
+                dataset = _determine_dataset(base)
+                
+                model_name = ""
+                remainder = base.replace(f"ga_evaluations_{dataset}_", "").replace(f"LLM-evolution-logs_{dataset}_", "").replace(".jsonl", "")
+                parts = remainder.split("_")
+                if len(parts) > 2 and "-" in remainder:
+                    model_name = "_".join(parts[:-2])
+                    
+                return target_ts, dataset, model_name
+    
+    # 3. Last fallback: return target_ts and empty dataset/model
+    return target_ts, "cifar10", ""
     
     # 3. No target specified -> find the absolute most recent log file
     search_patterns = [
@@ -281,41 +300,44 @@ def load_llm_logs(target_ts=None):
 # ---------------------------------------------------------------------------
 
 def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
-    attempts = group_by_meta_iteration(records, llm_entries)
-    if not attempts:
+    POP_SIZE = 20
+    generations = []
+    for i in range(0, len(records), POP_SIZE):
+        chunk = records[i:i+POP_SIZE]
+        if chunk:
+            generations.append({"generation": len(generations)+1, "evals": chunk})
+
+    if not generations:
         _warn("No grouped records found — skipping generation_accuracy.png")
         return
         
     gen_numbers, avg_accuracies, peak_accuracies, running_peaks = [], [], [], []
     running_peak = 0.0
     
-    for a in attempts:
-        accs = [e.get("accuracy", 0) for e in a["evals"] if "accuracy" in e]
+    for g in generations:
+        accs = [e.get("accuracy", 0) for e in g["evals"] if "accuracy" in e]
         if not accs: continue
         avg_acc = np.mean(accs)
         peak_acc = max(accs)
         running_peak = max(running_peak, peak_acc)
         
-        try: attempt_num = int(a['attempt'])
-        except ValueError: attempt_num = max(gen_numbers) + 1 if gen_numbers else 1
-        
-        gen_numbers.append(attempt_num)
+        gen_numbers.append(g["generation"])
         avg_accuracies.append(avg_acc)
         peak_accuracies.append(peak_acc)
         running_peaks.append(running_peak)
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(14, 7))
-        ax.plot(gen_numbers, avg_accuracies, label="Average Accuracy (per Attempt)",
+        fig, ax = plt.subplots(figsize=(max(8, len(gen_numbers) * 0.4), 7))
+        ax.plot(gen_numbers, avg_accuracies, label="Average Accuracy",
                 color="#3b82f6", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
-        ax.plot(gen_numbers, peak_accuracies, label="Peak Accuracy (per Attempt)",
+        ax.plot(gen_numbers, peak_accuracies, label="Peak Accuracy",
                 color="#f97316", linewidth=1.5, alpha=0.8, marker=".", markersize=4)
         ax.plot(gen_numbers, running_peaks, label="Running Best (cumulative)",
                 color="#10b981", linewidth=2.5, linestyle="--")
 
-        ax.set_xlabel("Meta-Iteration (Attempt)", fontsize=13)
+        ax.set_xlabel("Number of Generation", fontsize=13)
         ax.set_ylabel("Accuracy (%)", fontsize=13)
-        ax.set_title("LLM-Guided GA: Accuracy per Meta-Iteration", fontsize=15, fontweight="bold")
+        ax.set_title("LLM-Guided GA: Accuracy per Generation", fontsize=15, fontweight="bold")
         ax.legend(fontsize=11, loc="lower right")
         
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
@@ -329,9 +351,9 @@ def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
             
         if running_peaks:
             upper_limit = min(100, max(running_peaks) + 5)
-            ax.set_ylim(30, upper_limit)
+            ax.set_ylim(0, upper_limit)
         else:
-            ax.set_ylim(30, 100)
+            ax.set_ylim(0, 100)
 
         if running_peaks:
             ax.annotate(f"{running_peaks[-1]:.2f}%",
@@ -346,22 +368,26 @@ def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
 
 
 def plot_population_diversity(records, llm_entries, out_dir, saved_files):
-    attempts = group_by_meta_iteration(records, llm_entries)
-    if not attempts:
+    POP_SIZE = 20
+    generations = []
+    for i in range(0, len(records), POP_SIZE):
+        chunk = records[i:i+POP_SIZE]
+        if chunk:
+            generations.append({"generation": len(generations)+1, "evals": chunk})
+
+    if not generations:
         _warn("No records found — skipping population_diversity.png")
         return
 
     batches, positions = [], []
-    for a in attempts:
-        accs = [e["accuracy"] for e in a["evals"] if e.get("accuracy") is not None]
+    for g in generations:
+        accs = [e["accuracy"] for e in g["evals"] if e.get("accuracy") is not None]
         if accs:
             batches.append(accs)
-            try: pos = int(a['attempt'])
-            except ValueError: pos = max(positions) + 1 if positions else 1
-            positions.append(pos)
+            positions.append(g["generation"])
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(min(24, max(6, len(batches) * 0.5)), 5))
+        fig, ax = plt.subplots(figsize=(max(8, len(batches) * 0.5), 5))
         bp = ax.boxplot(
             batches,
             positions=positions,
@@ -379,22 +405,28 @@ def plot_population_diversity(records, llm_entries, out_dir, saved_files):
         ax.set_xticks(xticks)
         ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
-        _apply_style(ax, "Population Diversity per Meta-Iteration",
-                     "Meta-Iteration (Attempt)", "Accuracy (%)")
+        _apply_style(ax, "Population Diversity per Generation",
+                     "Number of Generation", "Accuracy (%)")
         _save(fig, os.path.join(out_dir, "population_diversity.png"), saved_files)
 
 
 def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
-    attempts = group_by_meta_iteration(records, llm_entries)
-    if not attempts:
+    POP_SIZE = 20
+    generations = []
+    for i in range(0, len(records), POP_SIZE):
+        chunk = records[i:i+POP_SIZE]
+        if chunk:
+            generations.append({"generation": len(generations)+1, "evals": chunk})
+
+    if not generations:
         _warn("No records found — skipping best_vs_avg_accuracy.png")
         return
 
     avg_per_batch, best_per_batch, median_per_batch, ci_per_batch, xs = [], [], [], [], []
     
-    for a in attempts:
-        chunk_acc = [e["accuracy"] for e in a["evals"] if e.get("accuracy") is not None]
-        chunk_best = [e.get("best_accuracy") for e in a["evals"] if e.get("best_accuracy") is not None]
+    for g in generations:
+        chunk_acc = [e["accuracy"] for e in g["evals"] if e.get("accuracy") is not None]
+        chunk_best = [e.get("best_accuracy") for e in g["evals"] if e.get("best_accuracy") is not None]
         if not chunk_acc: continue
         
         avg = sum(chunk_acc) / len(chunk_acc)
@@ -406,12 +438,10 @@ def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
         ci = 1.96 * (std / np.sqrt(len(chunk_acc)))
         ci_per_batch.append(ci)
         
-        try: attempt_num = int(a['attempt'])
-        except ValueError: attempt_num = max(xs) + 1 if xs else 1
-        xs.append(attempt_num)
+        xs.append(g["generation"])
 
     with plt.rc_context(PLOT_STYLE):
-        fig, ax = plt.subplots(figsize=(min(24, max(6, len(xs) * 0.5)), 5))
+        fig, ax = plt.subplots(figsize=(max(8, len(xs) * 0.5), 5))
         if xs:
             ax.set_xlim(0, max(1, len(xs) - 1))
         
@@ -430,27 +460,30 @@ def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
         ax.set_xticks(xticks)
         ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
             
-        _apply_style(ax, "Best vs Average Accuracy per Meta-Iteration",
-                     "Meta-Iteration (Attempt)", "Accuracy (%)")
+        _apply_style(ax, "Best vs Average Accuracy per Generation",
+                     "Number of Generation", "Accuracy (%)")
         ax.legend()
         _save(fig, os.path.join(out_dir, "best_vs_avg_accuracy.png"), saved_files)
 
 
 def plot_time_per_generation(records, llm_entries, out_dir, saved_files):
-    attempts = group_by_meta_iteration(records, llm_entries)
-    if not attempts:
+    POP_SIZE = 20
+    generations = []
+    for i in range(0, len(records), POP_SIZE):
+        chunk = records[i:i+POP_SIZE]
+        if chunk:
+            generations.append({"generation": len(generations)+1, "evals": chunk})
+
+    if not generations:
         _warn("No records found — skipping time_per_generation.png")
         return
 
     gen_numbers = []
     gen_times = []
     
-    for a in attempts:
-        try: attempt_num = int(a['attempt'])
-        except ValueError: attempt_num = max(gen_numbers) + 1 if gen_numbers else 1
-        gen_numbers.append(attempt_num)
-        
-        times = [datetime.fromisoformat(e["timestamp"]) for e in a["evals"] if "timestamp" in e]
+    for g in generations:
+        gen_numbers.append(g["generation"])
+        times = [datetime.fromisoformat(e["timestamp"]) for e in g["evals"] if "timestamp" in e]
         if times:
             gen_duration = (times[-1] - times[0]).total_seconds() / 60.0
             if len(times) > 1:
@@ -462,12 +495,12 @@ def plot_time_per_generation(records, llm_entries, out_dir, saved_files):
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(14, 7))
-        ax.plot(gen_numbers, gen_times, label="Time Taken (per Attempt)",
+        ax.plot(gen_numbers, gen_times, label="Time Taken (per Generation)",
                 color="#a855f7", linewidth=2.0, alpha=0.9, marker="s", markersize=5)
         
-        ax.set_xlabel("Meta-Iteration (Attempt)", fontsize=13)
+        ax.set_xlabel("Number of Generation", fontsize=13)
         ax.set_ylabel("Time Taken (Minutes)", fontsize=13)
-        ax.set_title("LLM-Guided GA: Compute Time per Attempt", fontsize=15, fontweight="bold")
+        ax.set_title("LLM-Guided GA: Compute Time per Generation", fontsize=15, fontweight="bold")
         ax.legend(fontsize=11, loc="upper right")
         
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
@@ -621,10 +654,14 @@ def main(target_ts=None, target_dataset=None):
         target_dataset = sys.argv[2]
         
     # Use source log timestamp so visualizations correlate with their experiment
-    timestamp, dataset_name = _extract_log_timestamp(target_ts)
+    timestamp, dataset_name, model_name = _extract_log_timestamp(target_ts)
     if target_dataset:
         dataset_name = target_dataset
-    run_dir    = os.path.join(VIZ_ROOT, f"run_{dataset_name}_{timestamp}")
+        
+    if model_name:
+        run_dir = os.path.join(VIZ_ROOT, f"visualization_meta_{dataset_name}_{model_name}_{timestamp}")
+    else:
+        run_dir = os.path.join(VIZ_ROOT, f"visualization_meta_{dataset_name}_{timestamp}")
     ga_dir     = os.path.join(run_dir, "ga_evolution")
     ft_dir     = os.path.join(run_dir, "fine_tuning")
 

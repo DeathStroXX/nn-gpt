@@ -30,7 +30,8 @@ TARGET_FILE = os.path.join(MODIFIED_GA_DIR, "genetic_algorithm_evolved.py")
 # Fair Benchmarking: Reset baseline if starting fresh
 CHECKPOINT_FILE = os.path.join(BASE_DIR, "GenFractal_ckpt_cifar10.pkl")
 BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup_cifar10")
-ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar10")
+# ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar10")
+ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "mistral_adapter_cifar10")
 
 if not os.path.exists(CHECKPOINT_FILE):
     baseline_file = os.path.join(BASE_DIR, "genetic_algorithm_baseline.py")
@@ -735,8 +736,8 @@ class MetaEvolver:
         return bool(valid_syntax and reward > 0)
 
 if __name__ == "__main__":
-    # MODEL_PATH = "deepseek-ai/deepseek-coder-6.7b-instruct" 
-    MODEL_PATH = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    with open(os.path.join(BASE_DIR, "model_config.json"), "r") as f:
+        MODEL_PATH = json.load(f).get("base_model_name", "mistralai/Mistral-7B-Instruct-v0.2")
     evolver = MetaEvolver(MODEL_PATH)
 
     # LOOP: CYCLE THROUGH ALL EVOLVABLE COMPONENTS
@@ -755,35 +756,19 @@ if __name__ == "__main__":
     COMPONENTS = ["combine_genes", "mutate_gene", "select_competitor", "_create_random_chromosome"]
 
     successes = 0
-    total_attempts = 0
-    component_index = 0
-    consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 10
-    MAX_TOTAL_ATTEMPTS = META_ITERATIONS * 10
-
-    print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry up to {MAX_CONSECUTIVE_FAILURES} times per component)")
-    while successes < META_ITERATIONS and total_attempts < MAX_TOTAL_ATTEMPTS:
-        total_attempts += 1
-        component = COMPONENTS[component_index]
-        print(f"\n=== Attempt {total_attempts} | Successes: {successes}/{META_ITERATIONS} — Evolving: {component} ===")
-        success = evolver.evolve_component(component, attempt=total_attempts, total_attempts=META_ITERATIONS)
+    print(f"\n[Meta] Target: {META_ITERATIONS} EXACT evolutions. No retries.")
+    for iteration in range(META_ITERATIONS):
+        component = COMPONENTS[iteration % len(COMPONENTS)]
+        print(f"\n=== Iteration {iteration+1}/{META_ITERATIONS} — Evolving: {component} ===")
+        success = evolver.evolve_component(component, attempt=iteration+1, total_attempts=META_ITERATIONS)
         if success:
             successes += 1
-            consecutive_failures = 0 # reset failures on success
-            component_index = (component_index + 1) % len(COMPONENTS) # move to next component
-            print(f"[Meta] ✓ Success #{successes}/{META_ITERATIONS} achieved on attempt {total_attempts}")
+            print(f"[Meta] ✓ Iteration {iteration+1} succeeded (accuracy improved).")
         else:
-            consecutive_failures += 1
-            print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}, successes so far: {successes}/{META_ITERATIONS})")
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                print(f"[Meta] ⚠️ Reached max consecutive failures ({MAX_CONSECUTIVE_FAILURES}) for {', '.join(component)}. Skipping to next component.")
-                consecutive_failures = 0
-                component_index = (component_index + 1) % len(COMPONENTS)
+            print(f"[Meta] ✗ Iteration {iteration+1} failed (regression or syntax error). Code reverted.")
         time.sleep(2)
         
-    if total_attempts >= MAX_TOTAL_ATTEMPTS:
-        print(f"\n[Meta] ⚠️ Reached absolute maximum attempts limit ({MAX_TOTAL_ATTEMPTS}). Halting.")
-    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions in {total_attempts} total attempts ===")
+    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions out of {META_ITERATIONS} strict attempts ===")
     
     # --- Generate visualizations after all iterations ---
     try:

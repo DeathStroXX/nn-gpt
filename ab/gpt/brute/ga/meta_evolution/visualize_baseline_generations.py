@@ -109,8 +109,8 @@ def main():
 
     ax.set_xlabel("Generation", fontsize=13)
     ax.set_ylabel("Accuracy (%)", fontsize=13)
-    # ax.set_title("Baseline GA: Accuracy per Generation (No Fractal Drop Path)", fontsize=15, fontweight="bold")
-    ax.set_title(f"{title_prefix}: Accuracy per Generation (No Fractal Drop Path)", fontsize=15, fontweight="bold")
+    # ax.set_title("Baseline GA: Accuracy per Generation", fontsize=15, fontweight="bold")
+    ax.set_title(f"{title_prefix}: Accuracy per Generation", fontsize=15, fontweight="bold")
     ax.legend(fontsize=11, loc="lower right")
     # ax.grid(True, alpha=0.3)
     ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
@@ -129,15 +129,45 @@ def main():
     # timestamp = log_basename.replace("baseline_evaluations_", "").replace(".jsonl", "")
     # plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{timestamp}")
     if "baseline_evaluations_" in log_basename:
-        dataset = "cifar100" if "cifar100" in log_basename else ("cifar10" if "cifar10" in log_basename else "")
-        timestamp = log_basename.replace("baseline_evaluations_cifar100_", "").replace("baseline_evaluations_cifar10_", "").replace("baseline_evaluations_", "").replace(".jsonl", "")
-        prefix = f"baseline_{dataset}_" if dataset else "baseline_"
-        plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
+        if "imagenet100" in log_basename: dataset = "imagenet100"
+        elif "cifar100" in log_basename: dataset = "cifar100"
+        elif "cifar10" in log_basename: dataset = "cifar10"
+        else: dataset = ""
+        
+        # Remove prefix
+        remainder = log_basename.replace(f"baseline_evaluations_{dataset}_", "") if dataset else log_basename.replace("baseline_evaluations_", "")
+        remainder = remainder.replace(".jsonl", "")
+        
+        # Parse model name if present
+        parts = remainder.split("_")
+        if len(parts) > 2 and "-" in remainder:
+            # We assume model name contains '-' or is the first part before date
+            timestamp = "_".join(parts[-2:])
+            model_name = "_".join(parts[:-2])
+            plot_dir = os.path.join(BASE_DIR, "visualizations", f"baseline_{dataset}_{model_name}_{timestamp}")
+        else:
+            timestamp = remainder
+            prefix = f"baseline_{dataset}_" if dataset else "baseline_"
+            plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
+            
     elif "ga_evaluations_" in log_basename:
-        dataset = "cifar100" if "cifar100" in log_basename else ("cifar10" if "cifar10" in log_basename else "")
-        timestamp = log_basename.replace("ga_evaluations_cifar100_", "").replace("ga_evaluations_cifar10_", "").replace("ga_evaluations_", "").replace(".jsonl", "")
-        prefix = f"run_{dataset}_" if dataset else "run_"
-        plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
+        if "imagenet100" in log_basename: dataset = "imagenet100"
+        elif "cifar100" in log_basename: dataset = "cifar100"
+        elif "cifar10" in log_basename: dataset = "cifar10"
+        else: dataset = ""
+        
+        remainder = log_basename.replace(f"ga_evaluations_{dataset}_", "") if dataset else log_basename.replace("ga_evaluations_", "")
+        remainder = remainder.replace(".jsonl", "")
+        
+        parts = remainder.split("_")
+        if len(parts) > 2 and "-" in remainder:
+            timestamp = "_".join(parts[-2:])
+            model_name = "_".join(parts[:-2])
+            plot_dir = os.path.join(BASE_DIR, "visualizations", f"run_{dataset}_{model_name}_{timestamp}")
+        else:
+            timestamp = remainder
+            prefix = f"run_{dataset}_" if dataset else "run_"
+            plot_dir = os.path.join(BASE_DIR, "visualizations", f"{prefix}{timestamp}")
     else:
         timestamp = log_basename.replace(".jsonl", "")
         plot_dir = os.path.join(BASE_DIR, "visualizations", f"run_{timestamp}")

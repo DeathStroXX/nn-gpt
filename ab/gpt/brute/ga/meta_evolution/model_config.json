@@ -1,5 +1,6 @@
 {
-    "base_model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "_qwen_base_model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "base_model_name": "mistralai/Mistral-7B-Instruct-v0.2",
     "num_epochs": 100,
     "num_test_epochs": 2,
     "use_deepspeed": false,

@@ -9,12 +9,17 @@ def calculate_meta_reward(current_score, best_ever_score, baseline_score, top3_m
     delta_baseline = current_score - baseline_score
 
     # 1. Baseline Regression Penalty (Crucial to prevent Model Collapse)
-    if delta_baseline < 0:
-        # Penalize bad code so the LLM doesn't learn mediocrity
+    if delta_baseline < -5.0:
+        # Penalize severely bad code so the LLM doesn't learn mediocrity
         penalty = delta_baseline * 0.2
         reward += penalty
-        print(f"   [RL] PENALTY: Regression below baseline ({delta_baseline:.2f}%). Penalty: {penalty:.4f}")
-        return reward # Immediately return, do not reward density or novelty if it's a regression!
+        print(f"   [RL] PENALTY: Severe Regression below baseline ({delta_baseline:.2f}%). Penalty: {penalty:.4f}")
+        return reward # Immediately return, do not reward density or novelty if it's a severe regression!
+    elif delta_baseline < 0:
+        # Mild regression (within 5% tolerance). Apply penalty but allow novelty/density to potentially rescue it!
+        penalty = delta_baseline * 0.2
+        reward += penalty
+        print(f"   [RL] PENALTY: Mild Regression ({delta_baseline:.2f}%). Penalty: {penalty:.4f}")
 
     # 2. Primary Reward: Delta SOTA (Frontier Expansion)
     delta_sota = current_score - best_ever_score

@@ -34,6 +34,7 @@ baseline_ga_fractal_arch*/
 # ============================
 fine_tuned_adapter*/
 ga_history_backup*/
+imagenet100_data/
 
 # ============================
 # Experiment Output Directories

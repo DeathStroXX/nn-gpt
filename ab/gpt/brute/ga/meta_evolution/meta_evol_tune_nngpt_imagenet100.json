@@ -1,0 +1,142 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "nngpt-fractal-search-clone3-imagenet100"
+  },
+  "spec": {
+    "parallelism": 1,
+    "ttlSecondsAfterFinished": 86400,
+    "template": {
+      "spec": {
+        "nodeSelector": {
+          "kubernetes.io/hostname": "dgx-h100"
+        },
+        "tolerations": [
+          {
+            "key": "dgx",
+            "operator": "Exists"
+          }
+        ],
+        "containers": [
+          {
+            "name": "ml",
+            "image": "abrainone/ai-linux:cu12.6.3-latest",
+            "imagePullPolicy": "Always",
+            "command": [
+              "/bin/bash",
+              "-c"
+            ],
+            "args": [
+              "cd /a/mm && (pip uninstall -y flash-attn || true) && pip install \"torchao==0.15.0\" --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_imagenet100 && export MODEL_NAME=$(python3 -c \"import json; print(json.load(open('model_config.json'))['base_model_name'].split('/')[-1])\") && export RUN_TYPE=meta && export DATASET=imagenet100 && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_imagenet100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET}/${RUN_TYPE}_pod_${DATASET}_${MODEL_NAME}_${RUN_TS}.log"
+            ],
+            "env": [
+              {
+                "name": "HF_HOME",
+                "value": "/a/mm/.cache/huggingface"
+              },
+              {
+                "name": "PIP_CACHE_DIR",
+                "value": "/a/mm/.cache/pip"
+              },
+              {
+                "name": "POPULATION_SIZE",
+                "value": "20"
+              },
+              {
+                "name": "GENERATIONS",
+                "value": "5"
+              },
+              {
+                "name": "MUTATION_RATE",
+                "value": "0.6"
+              },
+              {
+                "name": "META_ATTEMPTS",
+                "value": "5"
+              },
+              {
+                "name": "PYTORCH_CUDA_ALLOC_CONF",
+                "value": "expandable_segments:True"
+              },
+              {
+                "name": "LORA_REPLAY_BATCH_SIZE",
+                "value": "4"
+              },
+              {
+                "name": "LORA_REPLAY_BATCH_FALLBACKS",
+                "value": "2,1"
+              }
+            ],
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "runAsUser": 1017,
+              "runAsGroup": 1376
+            },
+            "resources": {
+              "requests": {
+                "nvidia.com/gpu": 1,
+                "cpu": 10,
+                "memory": "48Gi"
+              },
+              "limits": {
+                "nvidia.com/gpu": 1,
+                "cpu": 16,
+                "memory": "96Gi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/dev/shm",
+                "name": "shm"
+              },
+              {
+                "mountPath": "/a/mm",
+                "name": "v0"
+              },
+              {
+                "mountPath": "/a/mm/data",
+                "name": "v1"
+              },
+              {
+                "mountPath": "/a/mm/nn-dataset",
+                "name": "v2"
+              }
+            ]
+          }
+        ],
+        "restartPolicy": "Never",
+        "volumes": [
+          {
+            "name": "shm",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "16Gi"
+            }
+          },
+          {
+            "name": "v0",
+            "hostPath": {
+              "path": "/shared/ssd/home/b-a-singh/Thesis/clone3/nn-gpt",
+              "type": "Directory"
+            }
+          },
+          {
+            "name": "v1",
+            "hostPath": {
+              "path": "/shared/local/data/a-group-automl/data",
+              "type": "Directory"
+            }
+          },
+          {
+            "name": "v2",
+            "hostPath": {
+              "path": "/shared/ssd/home/b-a-singh/Thesis/NN-DATASET/C1/nn-dataset",
+              "type": "Directory"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
