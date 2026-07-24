@@ -194,14 +194,11 @@ def load_stats_records(target_ts=None):
     """
     records = []
     if target_ts:
-        log_files = [
-            os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations_cifar10_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations_cifar100_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations_{target_ts}.jsonl"),
-            os.path.join(LOGS_DIR, f"ga_evaluations_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, f"ga_evaluations_{target_ts}.jsonl")
-        ]
+        log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", f"ga_evaluations*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_cifar100", f"ga_evaluations*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_imagenet100", f"ga_evaluations*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(LOGS_DIR, f"ga_evaluations*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, f"ga_evaluations*{target_ts}.jsonl"))
         log_files = [f for f in log_files if os.path.exists(f)]
     else:
         log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", "ga_evaluations*.jsonl")) + \

@@ -3,14 +3,14 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.001
+# LR: 0.003
 # Momentum: 0.85
-# Activation: LeakyReLU
-# Kernel: 1
+# Activation: SiLU
+# Kernel: 5
 # Pooling: Max
 # Conv Type: Standard
 # Norm Type: BatchNorm
-# Optimizer: RMSprop
+# Optimizer: SGD
 # FC Dropout: 0.05
 
 # --- MANDATORY FOR EVAL ENGINE ---
@@ -39,8 +39,8 @@ class FractalBlock(nn.Module):
         self.n_columns = int(n_columns)
         channels = int(channels)  
 
-        activation_layer = nn.LeakyReLU(inplace=True)
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=1, padding=0, bias=False)
+        activation_layer = nn.SiLU(inplace=True)
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
@@ -66,7 +66,7 @@ class FractalBlock(nn.Module):
 class FractalBackbone(nn.Module):
     def __init__(self, in_channels):
         super(FractalBackbone, self).__init__()
-        start_chan = int(16)  
+        start_chan = int(64)  
 
         self.entry = nn.Sequential(
             nn.Conv2d(in_channels, start_chan, kernel_size=3, padding=1),
@@ -81,7 +81,7 @@ class FractalBackbone(nn.Module):
         total_blocks = int(4)
 
         for i in range(total_blocks):
-            blocks.append(FractalBlock(int(4), cur_chan, 0.1))
+            blocks.append(FractalBlock(int(2), cur_chan, 0.1))
             pools.append(nn.MaxPool2d(2))
 
             if i < total_blocks - 1:
@@ -163,7 +163,7 @@ class Net(nn.Module):
 
     def train_setup(self, prm):
         self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.optimizer = torch.optim.RMSprop(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
         self.max_batches = prm.get('max_batches', None)
 
         total_steps = 782 if self.max_batches is None else min(self.max_batches, 782)

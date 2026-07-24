@@ -18,20 +18,23 @@ nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
 nn_dataset.data.cache_clear = lambda: None
 from datetime import datetime
 
-from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader 
+from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader, get_model_short_name, get_dataset_name
 from ab.gpt.brute.ga.meta_evolution.rl_rewards import calculate_meta_reward
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODIFIED_GA_DIR = os.path.join(BASE_DIR, "modified_GA_imagenet100")
+_dataset_name = get_dataset_name(__file__)
+_model_name = get_model_short_name()
+
+MODIFIED_GA_DIR = os.path.join(BASE_DIR, f"modified_GA_{_dataset_name}")
 os.makedirs(MODIFIED_GA_DIR, exist_ok=True)
 TARGET_FILE = os.path.join(MODIFIED_GA_DIR, "genetic_algorithm_evolved_imagenet100.py")
 
 # Fair Benchmarking: Reset baseline if starting fresh
-CHECKPOINT_FILE = os.path.join(BASE_DIR, "GenFractal_ckpt_imagenet100.pkl")
-BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup_imagenet100")
+CHECKPOINT_FILE = os.path.join(BASE_DIR, f"GenFractal_ckpt_{_dataset_name}.pkl")
+BACKUP_DIR = os.path.join(BASE_DIR, f"ga_history_backup_{_dataset_name}")
 # ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_imagenet100")
-ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "mistral_adapter_imagenet100")
+ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, f"{_model_name}_adapter_{_dataset_name}")
 
 if not os.path.exists(CHECKPOINT_FILE):
     baseline_file = os.path.join(BASE_DIR, "genetic_algorithm_baseline.py")
@@ -62,17 +65,10 @@ if not os.path.exists(CHECKPOINT_FILE):
 
 RUNNER_SCRIPT = os.path.join(BASE_DIR, "run_fractal_evolution_imagenet100.py")
 RUN_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-LOGS_DIR = os.path.join(BASE_DIR, "logs_imagenet100")
+LOGS_DIR = os.path.join(BASE_DIR, f"logs_{_dataset_name}")
 os.makedirs(LOGS_DIR, exist_ok=True)
-import json
-try:
-    with open('model_config.json', 'r') as f:
-        _model_name = json.load(f).get('base_model_name', 'unknown').split('/')[-1]
-except:
-    _model_name = 'unknown'
-
-LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_imagenet100_{_model_name}_{RUN_TIMESTAMP}.jsonl")
-GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_imagenet100_{_model_name}_{RUN_TIMESTAMP}.jsonl")
+LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_{_dataset_name}_{_model_name}_{RUN_TIMESTAMP}.jsonl")
+GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_{_dataset_name}_{_model_name}_{RUN_TIMESTAMP}.jsonl")
 
 # KEEP BENCHMARKS SMALL FOR FAST FEEDBACK, BUT CONFIGURABLE VIA ENV
 BENCH_GENS = int(os.environ.get("GENERATIONS", 3))
@@ -529,15 +525,11 @@ class MetaEvolver:
                     if val not in SEARCH_SPACE[gene]:
                         raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space")
 
-                # 6. Test _selection (needs a populated population + archive)
+                # 6. Test _selection (needs a populated population)
                 test_ga.population = [
                     {"chromosome": test_ga._create_random_chromosome(), "fitness": random.uniform(10, 70)}
                     for _ in range(4)
                 ]
-                test_ga.archive = {}
-                for ind in test_ga.population:
-                    cell = (ind['chromosome'].get('n_blocks', 1), ind['chromosome'].get('base_channels', 16))
-                    test_ga.archive[cell] = ind
                 parent = test_ga._selection()
                 if not isinstance(parent, dict) or "chromosome" not in parent:
                     raise ValueError(f"Smoke test: _selection returned invalid result: {type(parent)}")

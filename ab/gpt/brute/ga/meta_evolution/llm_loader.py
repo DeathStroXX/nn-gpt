@@ -15,6 +15,27 @@ def _load_model_config():
     print(f"[Config] Loaded model_config.json  (context_length={config['context_length']})")
     return config
 
+def get_model_short_name():
+    try:
+        config = _load_model_config()
+        full = config.get("base_model_name", "unknown").lower()
+        if "qwen" in full: return "qwen"
+        if "deepseek" in full: return "deepseek"
+        if "mistral" in full: return "mistral"
+        return full.split('/')[0]
+    except Exception:
+        return "unknown"
+
+def get_dataset_name(script_path):
+    filename = os.path.basename(script_path)
+    if "cifar100" in filename:
+        return "cifar100"
+    elif "imagenet100" in filename:
+        return "imagenet100"
+    else:
+        return "cifar10"
+
+
 class LocalLLMLoader:
     def __init__(self, model_path=None, use_quantization=True, adapter_path=None):
         # Load centralised config
