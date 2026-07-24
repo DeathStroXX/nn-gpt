@@ -1,8 +1,6 @@
 import random
 import pickle
 import os
-import copy
-import numpy as np
 
 class GeneticAlgorithm:
     def __init__(self, population_size, search_space, elitism_count, mutation_rate,
@@ -12,39 +10,16 @@ class GeneticAlgorithm:
         self.elitism_count = elitism_count
         self.mutation_rate = mutation_rate
         self.population = []
-        self.archive = {}  # MAP-Elites behavioral archive mapping (n_blocks, base_channels) to incumbent
         self.checkpoint_path = checkpoint_path
 
     def _create_random_chromosome(self):
         return {key: random.choice(values) for key, values in self.search_space.items()}
 
-    def _coerce_gene_value(self, gene_name, value):
-        valid_values = self.search_space[gene_name]
-        if not valid_values:
-            return value
-        if value in valid_values:
-            return value
-
-        exemplar = valid_values[0]
-        if isinstance(exemplar, (int, float, np.integer, np.floating)) and isinstance(
-            value, (int, float, np.integer, np.floating)
-        ):
-            return min(valid_values, key=lambda candidate: abs(float(candidate) - float(value)))
-
-        return random.choice(valid_values)
-
-    def _sanitize_chromosome(self, chromosome):
-        sanitized = chromosome.copy()
-        for gene_name in self.search_space:
-            if gene_name in sanitized:
-                sanitized[gene_name] = self._coerce_gene_value(gene_name, sanitized[gene_name])
-        return sanitized
-
     def _initialize_population(self):
         self.population = [{'chromosome': self._create_random_chromosome(), 'fitness': None} for _ in range(self.population_size)]
 
     def _save_checkpoint(self, generation_num):
-        state = {'generation': generation_num, 'population': self.population, 'archive': self.archive}
+        state = {'generation': generation_num, 'population': self.population}
         with open(self.checkpoint_path, 'wb') as f: pickle.dump(state, f)
 
     def _load_checkpoint(self):
@@ -52,11 +27,7 @@ class GeneticAlgorithm:
             try:
                 with open(self.checkpoint_path, 'rb') as f:
                     state = pickle.load(f)
-                population = state['population']
-                self.archive = state.get('archive', {})
-                for individual in population:
-                    individual['chromosome'] = self._sanitize_chromosome(individual['chromosome'])
-                return state['generation'], population
+                return state['generation'], state['population']
             except: pass
         return 0, None
 
@@ -114,16 +85,9 @@ class GeneticAlgorithm:
             print(f"\n\n >>> GENERATION {gen + 1} <<<\n")
             # Evaluate
             for i, ind in enumerate(self.population):
-                ind['chromosome'] = self._sanitize_chromosome(ind['chromosome'])
                 if ind['fitness'] is None:
                     print(f"  Evaluating Individual {i+1}/{len(self.population)} ---- Generation: {gen+1}/{num_generations}")
                     ind['fitness'] = fitness_function(ind['chromosome'])
-                
-                # MAP-Elites Archive Update
-                cell = (ind['chromosome'].get('n_blocks', 1), ind['chromosome'].get('base_channels', 16))
-                if cell not in self.archive or ind['fitness'] > self.archive[cell]['fitness']:
-                    self.archive[cell] = copy.deepcopy(ind)
-                    print(f"  [Archive] Cell {cell} updated with fitness: {ind['fitness']:.4f}")
             
             # Sort
             self.population.sort(key=lambda x: x['fitness'] if x['fitness'] is not None else -1, reverse=True)
@@ -134,9 +98,8 @@ class GeneticAlgorithm:
             if best_overall is None or current_best > best_overall['fitness']:
                 best_overall = self.population[0].copy()
 
-            # Next Gen (Using deepcopy to protect elites from accidental mutation)
-            # next_gen = self.population[:self.elitism_count]
-            next_gen = copy.deepcopy(self.population[:self.elitism_count])
+            # Next Gen
+            next_gen = self.population[:self.elitism_count]
             while len(next_gen) < self.population_size:
                 p1 = self._selection()
                 p2 = self._selection()

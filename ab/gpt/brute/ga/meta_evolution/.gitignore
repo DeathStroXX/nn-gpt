@@ -41,3 +41,4 @@ ga_history_backup*/
 logs_cifar*/
 modified_GA_cifar*/
 stats_plain_GA/
+imagenet100_data/
