@@ -35,7 +35,7 @@ def suppress_output():
             sys.stderr = old_stderr
 
 import torch
-from ab.gpt.brute.ga.meta_evolution.genetic_algorithm_baseline import GeneticAlgorithm
+from ab.gpt.brute.ga.meta_evolution.modified_GA_imagenet100.genetic_algorithm_evolved_imagenet100 import GeneticAlgorithm
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE, generate_model_code_string
 from ab.gpt.util.Eval import Eval
 import ab.nn.api as nn_dataset
@@ -44,6 +44,36 @@ import pandas as pd
 nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
 nn_dataset.data.cache_clear = lambda: None
 
+# MONKEYPATCH 2: Fix cross-pod race condition in Eval's isolated temp module directory.
+# Multiple pods share the same volume and can have the same PID (e.g., PID 306). We inject a UUID.
+import ab.gpt.util.Eval as eval_module
+import uuid
+from pathlib import Path
+
+@contextmanager
+def safe_isolated_eval_tmp_modules():
+    import ab.nn.util.Train as train_runtime
+    from ab.nn.util.Const import ab_root_path
+    
+    original_out = getattr(train_runtime, 'out', None)
+    if not isinstance(original_out, str) or not original_out:
+        yield
+        return
+
+    isolated_out = f"{original_out}_nneval_tmp_{uuid.uuid4().hex[:8]}"
+    isolated_root = Path(ab_root_path) / isolated_out
+    train_runtime.out = isolated_out
+    try:
+        yield
+    finally:
+        train_runtime.out = original_out
+        stale_prefix = f"{isolated_out}."
+        for module_name in tuple(sys.modules):
+            if module_name == isolated_out or module_name.startswith(stale_prefix):
+                sys.modules.pop(module_name, None)
+        shutil.rmtree(isolated_root, ignore_errors=True)
+
+eval_module._isolated_eval_tmp_modules = safe_isolated_eval_tmp_modules
 import logging
 
 # Configure logging to be simpler (remove timestamps for cleaner output)
@@ -52,52 +82,16 @@ logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 # --- PATH SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # This is the folder where unique fractal models will be saved
-ARCH_DIR = os.path.join(BASE_DIR, 'baseline_ga_fractal_arch_imagenet100') 
-STATS_DIR = os.path.join(BASE_DIR, 'baseline_statsimagenet100')
-# CHECKPOINT = 'fractal_ga_ckpt.pkl'
-# CHECKPOINT = os.path.join(BASE_DIR, 'baseline_ga_ckpt.pkl')
-CHECKPOINT = os.path.join(BASE_DIR, 'GenFractal_baseline_imagenet100_ckpt.pkl')
-BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_baseline_statsimagenet100')
+ARCH_DIR = os.path.join(BASE_DIR, 'ga_fractal_arch_imagenet100') 
+STATS_DIR = os.path.join(BASE_DIR, 'statsimagenet100')
+CHECKPOINT = os.path.join(BASE_DIR, 'GenFractal_imagenet100_ckpt.pkl')
+BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_statsimagenet100')
 
 os.makedirs(ARCH_DIR, exist_ok=True)
 os.makedirs(STATS_DIR, exist_ok=True)
 
 # seen_checksums = set()
 fitness_cache = {}
-archive = {}
-
-import copy
-import random
-import numpy as np
-
-def coerce_gene_value(gene_name, value, search_space):
-    """Snap out-of-bounds gene values to nearest valid option."""
-    valid_values = search_space.get(gene_name)
-    if not valid_values:
-        return value
-    if value in valid_values:
-        return value
-    exemplar = valid_values[0]
-    if isinstance(exemplar, (int, float, np.integer, np.floating)) and isinstance(
-        value, (int, float, np.integer, np.floating)
-    ):
-        return min(valid_values, key=lambda candidate: abs(float(candidate) - float(value)))
-    return random.choice(valid_values)
-
-def sanitize_chromosome(chromosome, search_space):
-    """Ensure all gene values are within the search space."""
-    sanitized = chromosome.copy()
-    for gene_name in search_space:
-        if gene_name in sanitized:
-            sanitized[gene_name] = coerce_gene_value(gene_name, sanitized[gene_name], search_space)
-    return sanitized
-
-def update_archive(individual, search_space):
-    """Update the MAP-Elites archive with the individual if it's the best for its cell."""
-    cell = (individual['chromosome'].get('n_blocks', 1), individual['chromosome'].get('base_channels', 16))
-    if cell not in archive or individual['fitness'] > archive[cell]['fitness']:
-        archive[cell] = copy.deepcopy(individual)
-        print(f"  [Archive] Cell {cell} updated with fitness: {individual['fitness']:.4f}")
 
 def _log_eval(checksum, accuracy, is_cached):
     if float(accuracy) <= 0.0:
@@ -118,10 +112,11 @@ def _log_eval(checksum, accuracy, is_cached):
 
 # Persist checksums across runs: load checksums from existing stats folders
 def _load_existing_checksums():
-    """Scan baseline_stats/ directory for previously evaluated models and cache their fitness."""
+    """Scan stats/ directory for previously evaluated models and cache their fitness."""
     count = 0
     # prefix = "img-classification_cifar_GenFractalNet-"   # BUG: missing '-10', never matched any folder
-    prefix = "img-classification_imagenet-100_GenFractalNet-"
+    # prefix = "img-classification_cifar-100_GenFractalNet-"
+    prefix = "img-classification_imagenet-100_acc_GenFractalNet-"
     if os.path.isdir(STATS_DIR):
         for name in os.listdir(STATS_DIR):
             if name.startswith(prefix):
@@ -160,17 +155,17 @@ def _load_existing_checksums():
                 fitness_cache[checksum] = cached_fitness
                 count += 1
     if count:
-        print(f"[Init] Loaded {count} existing checksums from baseline_stats/ (skipping duplicates)")
+        print(f"[Init] Loaded {count} existing checksums from stats/ (skipping duplicates)")
 
 _load_existing_checksums()
 
 def _lookup_stored_fitness(checksum: str) -> float:
     """
     For a previously-evaluated model (duplicate), read its stored accuracy
-    from the baseline_stats/ folder instead of returning 0.0.
+    from the stats/ folder instead of returning 0.0.
     Returns fitness as a percentage (e.g. 54.69), or 0.0 if the file is missing/unreadable.
     """
-    stats_dir_name = f"img-classification_imagenet-100_GenFractalNet-{checksum}"
+    stats_dir_name = f"img-classification_imagenet-100_acc_GenFractalNet-{checksum}"
     stats_dir_path = os.path.join(STATS_DIR, stats_dir_name)
     if not os.path.isdir(stats_dir_path):
         print(f"  - Duplicate: no stored stats found for {checksum[:8]}, returning 0.0")
@@ -218,10 +213,11 @@ def uuid4(s: str) -> str:
     return hashlib.md5(s.encode()).hexdigest()
 
 def fitness_function(chromosome: dict) -> float:
+    # --- Sentinel variables for cleanup and logging on failure ---
+    tmp_filepath = None
+    model_stats_dir_path = None
+    model_checksum = "failed_gen"
     try:
-        # --- Sentinel variables for cleanup on failure ---
-        tmp_filepath = None
-        model_stats_dir_path = None
 
         # 1. Generate Source Code
         code_str = generate_model_code_string(chromosome)
@@ -256,10 +252,10 @@ def fitness_function(chromosome: dict) -> float:
         eval_prm = {
             'lr': chromosome['lr'],
             'momentum': chromosome['momentum'],
-            'batch': 64,  # Increased from 32: more signal per step, avoids AccuracyException floor
+            'batch': 64,
             'epoch': 1,   # Short epochs for Meta-Evaluation
             'transform': "norm_32_flip",  # Native CIFAR-10 resolution (was 256 → massive slowdown)
-            # 'max_batches': None,  # None = full dataset (782 batches), or set int for proxy eval (e.g. 200)
+            # 'max_batches': None,
             'max_batches': 400,  # Proxy evaluation (~5x speedup for ImageNet-100)
         }
 
@@ -277,7 +273,7 @@ def fitness_function(chromosome: dict) -> float:
         evaluator = Eval(
             model_source_package=ARCH_DIR,
             task='img-classification',
-            dataset='imagenet100',
+            dataset='imagenet-100',
             metric='acc',
             prm=eval_prm,
             save_to_db=False,
@@ -322,7 +318,7 @@ def fitness_function(chromosome: dict) -> float:
                 full_res = {
                     'config': {
                         'task': 'img-classification',
-                        'dataset': 'imagenet100',
+                        'dataset': 'imagenet-100',
                         'metric': 'acc',
                         'model': model_name
                     },
@@ -339,7 +335,8 @@ def fitness_function(chromosome: dict) -> float:
         
         # Save exact requested stats format to a JSON folder structure
         # One JSON file per epoch: 1.json, 2.json, ..., N.json
-        model_stats_dir_name = f"img-classification_imagenet-100_GenFractalNet-{model_checksum}"
+        # model_stats_dir_name = f"img-classification_cifar-100_GenFractalNet-{model_checksum}"
+        model_stats_dir_name = f"img-classification_imagenet-100_acc_GenFractalNet-{model_checksum}"
         model_stats_dir_path = os.path.join(STATS_DIR, model_stats_dir_name)
         os.makedirs(model_stats_dir_path, exist_ok=True)
 
@@ -377,6 +374,9 @@ def fitness_function(chromosome: dict) -> float:
                 os.remove(tmp_filepath)
             if os.path.isdir(model_stats_dir_path):
                 shutil.rmtree(model_stats_dir_path)
+            
+            # Log the failure entry to ga_evaluations
+            _log_eval(model_checksum, 0.0, False)
             return 0.0
 
         # Stats verified — promote temp model file to its final location
@@ -463,10 +463,10 @@ if __name__ == "__main__":
     if not os.environ.get("GA_EVAL_LOG"):
         _standalone_mode = True
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        logs_dir = os.path.join(BASE_DIR, "logs")
+        logs_dir = os.path.join(BASE_DIR, "logs_imagenet100")
         os.makedirs(logs_dir, exist_ok=True)
-        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"baseline_evaluations_imagenet100_{run_ts}.jsonl")
-        print(f"[LOG] Baseline GA eval log: {os.environ['GA_EVAL_LOG']}")
+        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_imagenet100_{run_ts}.jsonl")
+        print(f"[LOG] GA eval log: {os.environ['GA_EVAL_LOG']}")
 
     if args.clean and os.path.exists(CHECKPOINT):
         os.remove(CHECKPOINT)
@@ -485,34 +485,26 @@ if __name__ == "__main__":
         start_gen, _ = ga._load_checkpoint()
         target_gens = start_gen + args.gens
         print(f"[Run] Continuing evolution from gen {start_gen} to {target_gens}")
-        
-        def fitness_with_archive(chromosome):
-            sanitized = sanitize_chromosome(chromosome, SEARCH_SPACE)
-            chromosome.update(sanitized)  # Fix in-place so GA sees clean values
-            fitness = fitness_function(chromosome)
-            # Update archive after evaluation
-            update_archive({'chromosome': chromosome, 'fitness': fitness}, SEARCH_SPACE)
-            return fitness
-
-        best, history = ga.run(target_gens, fitness_with_archive)
+        best, history = ga.run(target_gens, fitness_function)
         
         # Save Best Architecture
         if best:
              best_code = generate_model_code_string(best['chromosome'])
-             best_path = os.path.join(BASE_DIR, "best_baseline_model_imagenet100.py")
+             best_path = os.path.join(BASE_DIR, "best_fractal_model_imagenet100.py")
              with open(best_path, "w") as f:
                  f.write(best_code)
              print(f"[Best] Saved best model to {best_path}")
 
              # Copy Winning Stats
              best_checksum = uuid4(best_code)
-             best_folder_name = f"img-classification_imagenet-100_GenFractalNet-{best_checksum}"
+             # best_folder_name = f"img-classification_cifar-100_GenFractalNet-{best_checksum}"
+             best_folder_name = f"img-classification_imagenet-100_acc_GenFractalNet-{best_checksum}"
              src_stats_path = os.path.join(STATS_DIR, best_folder_name)
              dst_stats_path = os.path.join(BEST_STATS_DIR, best_folder_name)
 
              os.makedirs(BEST_STATS_DIR, exist_ok=True)
              
-             # Refresh the best_baseline_stats folder for this run
+             # Refresh the best_fractal_stats folder for this run
              if os.path.exists(BEST_STATS_DIR):
                  for item in os.listdir(BEST_STATS_DIR):
                      item_path = os.path.join(BEST_STATS_DIR, item)
@@ -529,7 +521,7 @@ if __name__ == "__main__":
                  print(f"[Best] Warning: stats folder not found for checksum {best_checksum[:8]}")
 
              # Save Best Info Metadata
-             info_path = os.path.join(BASE_DIR, "best_baseline_info_imagenet100.json")
+             info_path = os.path.join(BASE_DIR, "best_fractal_info_imagenet100.json")
              best_info = {
                  "timestamp": datetime.now().isoformat(),
                  "checksum": best_checksum,
@@ -552,7 +544,7 @@ if __name__ == "__main__":
             else:
                 top3_mean = peak
                 
-            archive_size = len(archive)
+            archive_size = len(ga.archive)
         else:
             top3_mean = 0.0
             peak = 0.0
@@ -562,7 +554,7 @@ if __name__ == "__main__":
         print(f"TOP3_MEAN: {top3_mean:.4f}")
         print(f"ARCHIVE_SIZE: {archive_size}")
         
-        # Save baseline trajectory
+        # Save evolved trajectory
         trajectory = {
             "peak_accuracy": peak,
             "top3_mean": top3_mean,
@@ -570,9 +562,8 @@ if __name__ == "__main__":
             "fitness_history": history,
             "total_generations": target_gens
         }
-        with open(os.path.join(BASE_DIR, "baseline_results_imagenet100.json"), "w") as f:
+        with open(os.path.join(BASE_DIR, "evolved_results_imagenet100.json"), "w") as f:
             json.dump(trajectory, f, indent=4)
-        print(f"[Run] Saved baseline trajectory to baseline_results_imagenet100.json")
 
     except Exception as e:
         import traceback
@@ -585,7 +576,7 @@ if __name__ == "__main__":
     # (meta_evolver.py handles its own visualization at the end)
     if _standalone_mode:
         try:
-            from ab.gpt.brute.ga.meta_evolution.visualize_baseline_generations import main as generate_plots
+            from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
             print("\n=== Generating Visualizations ===")
             generate_plots()
         except Exception as e:

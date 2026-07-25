@@ -9,9 +9,6 @@
     "ttlSecondsAfterFinished": 86400,
     "template": {
       "spec": {
-        "nodeSelector": {
-          "kubernetes.io/hostname": "dgx-h100"
-        },
         "tolerations": [
           {
             "key": "dgx",
@@ -45,7 +42,7 @@
               },
               {
                 "name": "GENERATIONS",
-                "value": "25"
+                "value": "30"
               },
               {
                 "name": "MUTATION_RATE",

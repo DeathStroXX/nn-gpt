@@ -2,16 +2,13 @@
   "apiVersion": "batch/v1",
   "kind": "Job",
   "metadata": {
-    "name": "nngpt-fractal-search-clone4-imagenet100"
+    "name": "nngpt-fractal-meta-evo-clone4-imagenet100"
   },
   "spec": {
     "parallelism": 1,
     "ttlSecondsAfterFinished": 86400,
     "template": {
       "spec": {
-        "nodeSelector": {
-          "kubernetes.io/hostname": "dgx-h100"
-        },
         "tolerations": [
           {
             "key": "dgx",
@@ -28,7 +25,7 @@
               "-c"
             ],
             "args": [
-              "cd /a/mm && (pip uninstall -y flash-attn || true) && pip install \"torchao==0.15.0\" kagglehub --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && export DATASET=imagenet100 && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET} && export MODEL_NAME=$(python3 -c \"import json; full=json.load(open('/a/mm/ab/gpt/brute/ga/meta_evolution/model_config.json')).get('base_model_name', 'unknown').lower(); print('qwen' if 'qwen' in full else 'deepseek' if 'deepseek' in full else 'mistral' if 'mistral' in full else full.split('/')[0])\") && export RUN_TYPE=meta && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_imagenet100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET}/${RUN_TYPE}_pod_${DATASET}_${MODEL_NAME}_${RUN_TS}.log"
+              "cd /a/mm && (pip uninstall -y flash-attn || true) && pip install \"torchao==0.15.0\" kagglehub --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && pip install git+https://github.com/ABrain-One/nn-dataset --no-deps --upgrade && export PYTHONPATH=/a/mm && site_pkg=$(python3 -c 'import site; print(site.getusersitepackages())') && mkdir -p /a/mm/ab/nn && cp -r --update=none $site_pkg/ab/nn/* /a/mm/ab/nn/ || true && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && export DATASET=imagenet100 && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET} && export MODEL_NAME=$(python3 -c \"import json; full=json.load(open('/a/mm/ab/gpt/brute/ga/meta_evolution/model_config.json')).get('base_model_name', 'unknown').lower(); print('qwen' if 'qwen' in full else 'deepseek' if 'deepseek' in full else 'mistral' if 'mistral' in full else full.split('/')[0])\") && export RUN_TYPE=meta && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_imagenet100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET}/${RUN_TYPE}_pod_${DATASET}_${MODEL_NAME}_${RUN_TS}.log"
             ],
             "env": [
               {
@@ -41,7 +38,7 @@
               },
               {
                 "name": "POPULATION_SIZE",
-                "value": "20"
+                "value": "2"
               },
               {
                 "name": "GENERATIONS",

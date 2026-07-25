@@ -22,6 +22,10 @@ def calculate_meta_reward(current_score, best_ever_score, baseline_score, top3_m
         sota_bonus = math.log1p(delta_sota) * 5.0
         reward += sota_bonus
         print(f"   [RL] PRIMARY: +{delta_sota:.2f}% SOTA Improvement! Bonus: {sota_bonus:.4f}")
+    else:
+        sota_penalty = -1.0
+        reward += sota_penalty
+        print(f"   [RL] PENALTY: Failed to beat previous SOTA. Penalty: {sota_penalty:.4f}")
     
     # 3. Secondary Reward: Quality Density (Top-3 Mean)
     if top3_mean > 0:

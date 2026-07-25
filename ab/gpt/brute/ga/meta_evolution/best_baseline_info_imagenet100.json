@@ -1,0 +1,22 @@
+{
+    "timestamp": "2026-07-19T17:45:42.362518",
+    "checksum": "0bec0dc07d6a1e53ba14ab2044d264f7",
+    "fitness": 0.0,
+    "chromosome": {
+        "n_columns": 4,
+        "base_channels": 16,
+        "n_blocks": 2,
+        "dropout_prob": 0.5,
+        "fc_dropout": 0.4,
+        "lr": 0.004,
+        "momentum": 0.75,
+        "activation": "GELU",
+        "kernel_size": 3,
+        "pooling_type": "Max",
+        "conv_type": "Standard",
+        "norm_type": "BatchNorm",
+        "optimizer_type": "SGD"
+    },
+    "source_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/baseline_statsimagenet100/img-classification_imagenet-100_GenFractalNet-0bec0dc07d6a1e53ba14ab2044d264f7",
+    "copied_stats_dir": "/a/mm/ab/gpt/brute/ga/meta_evolution/best_baseline_statsimagenet100/img-classification_imagenet-100_GenFractalNet-0bec0dc07d6a1e53ba14ab2044d264f7"
+}
