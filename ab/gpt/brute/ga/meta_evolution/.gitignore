@@ -12,7 +12,7 @@ out/
 out_nneval_tmp_pid_*/
 logs/
 *.jsonl
-visualizations/
+# visualizations/
 
 # ============================
 # Checkpoints (all .pkl files)
@@ -39,7 +39,7 @@ imagenet100_data/
 # ============================
 # Experiment Output Directories
 # ============================
-logs_cifar*/
+# logs_cifar*/
 modified_GA_cifar*/
 stats_plain_GA/
 
@@ -62,5 +62,5 @@ best_*_stats*/
 ga_fractal_arch*/
 baseline_ga_fractal_arch*/
 visualizations/
-logs*/
+# logs*/
 modified_GA_*/
