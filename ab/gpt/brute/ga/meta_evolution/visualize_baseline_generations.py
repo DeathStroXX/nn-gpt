@@ -46,10 +46,10 @@ def split_into_generations(entries, gen1_size=20, rest_size=15):
 # def main():
 #     print(f"Loading: {LOG_FILE}")
 def main(dataset=None, log_file_override=None):
-    if dataset and dataset != "cifar10":
+    if dataset:
         target_logs_dir = os.path.join(BASE_DIR, f"logs_{dataset}")
     else:
-        target_logs_dir = os.path.join(BASE_DIR, "logs")
+        target_logs_dir = os.path.join(BASE_DIR, "logs_cifar10")
 
     if log_file_override:
         LOG_FILE = log_file_override

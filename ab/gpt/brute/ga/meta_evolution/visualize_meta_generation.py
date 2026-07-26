@@ -293,13 +293,24 @@ def load_llm_logs(target_ts=None):
 # GA Evolution plots
 # ---------------------------------------------------------------------------
 
-def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
-    POP_SIZE = 20
+def group_meta_generations(records):
     generations = []
-    for i in range(0, len(records), POP_SIZE):
-        chunk = records[i:i+POP_SIZE]
-        if chunk:
-            generations.append({"generation": len(generations)+1, "evals": chunk})
+    idx = 0
+    if idx < len(records):
+        generations.append({"generation": len(generations)+1, "evals": records[idx:idx+20]})
+        idx += 20
+    if idx < len(records):
+        generations.append({"generation": len(generations)+1, "evals": records[idx:idx+20]})
+        idx += 20
+    while idx < len(records):
+        generations.append({"generation": len(generations)+1, "evals": records[idx:idx+15]})
+        idx += 15
+    # Remove empty generations just in case
+    return [g for g in generations if g["evals"]]
+
+
+def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
+    generations = group_meta_generations(records)
 
     if not generations:
         _warn("No grouped records found — skipping generation_accuracy.png")
@@ -345,9 +356,13 @@ def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
             
         if running_peaks:
             upper_limit = min(100, max(running_peaks) + 5)
-            ax.set_ylim(0, upper_limit)
+            lower_limit = max(0, min(min(avg_accuracies), min(peak_accuracies)) - 5)
+            ax.set_ylim(lower_limit, upper_limit)
         else:
             ax.set_ylim(0, 100)
+            
+        if gen_numbers:
+            ax.set_xlim(1, max(gen_numbers))
 
         if running_peaks:
             ax.annotate(f"{running_peaks[-1]:.2f}%",
@@ -362,12 +377,7 @@ def plot_generation_accuracy(records, llm_entries, out_dir, saved_files):
 
 
 def plot_population_diversity(records, llm_entries, out_dir, saved_files):
-    POP_SIZE = 20
-    generations = []
-    for i in range(0, len(records), POP_SIZE):
-        chunk = records[i:i+POP_SIZE]
-        if chunk:
-            generations.append({"generation": len(generations)+1, "evals": chunk})
+    generations = group_meta_generations(records)
 
     if not generations:
         _warn("No records found — skipping population_diversity.png")
@@ -405,12 +415,7 @@ def plot_population_diversity(records, llm_entries, out_dir, saved_files):
 
 
 def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
-    POP_SIZE = 20
-    generations = []
-    for i in range(0, len(records), POP_SIZE):
-        chunk = records[i:i+POP_SIZE]
-        if chunk:
-            generations.append({"generation": len(generations)+1, "evals": chunk})
+    generations = group_meta_generations(records)
 
     if not generations:
         _warn("No records found — skipping best_vs_avg_accuracy.png")
@@ -437,7 +442,9 @@ def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(max(8, len(xs) * 0.5), 5))
         if xs:
-            ax.set_xlim(0, max(1, len(xs) - 1))
+            ax.set_xlim(1, max(xs))
+            min_y = min([x for x in np.array(avg_per_batch) - np.array(ci_per_batch)])
+            ax.set_ylim(max(0, min_y - 5), min(100, max(best_per_batch) + 5))
         
         ax.plot(xs, avg_per_batch, color=BAR_COLOR, alpha=0.8, label="Avg Accuracy", zorder=2, linewidth=2)
         
@@ -461,12 +468,7 @@ def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files):
 
 
 def plot_time_per_generation(records, llm_entries, out_dir, saved_files):
-    POP_SIZE = 20
-    generations = []
-    for i in range(0, len(records), POP_SIZE):
-        chunk = records[i:i+POP_SIZE]
-        if chunk:
-            generations.append({"generation": len(generations)+1, "evals": chunk})
+    generations = group_meta_generations(records)
 
     if not generations:
         _warn("No records found — skipping time_per_generation.png")

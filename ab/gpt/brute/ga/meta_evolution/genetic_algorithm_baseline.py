@@ -35,14 +35,21 @@ class GeneticAlgorithm:
     def combine_genes(self, gene_name, parent1_value, parent2_value, crossover_point, gene_index, total_genes):
         if gene_index < crossover_point:
             return parent1_value
-        return parent2_value
+        else:
+            return parent2_value
 
     def mutate_gene(self, gene_name, current_value, possible_values):
         if possible_values:
-            return random.choice(possible_values)
+            choices = list(set(possible_values) - set([current_value]))
+            if choices:
+                mutation_probability = self.mutation_rate * 2  # Increase mutation probability
+                if random.random() < mutation_probability:
+                    return random.choice(choices)
         return current_value
 
     def select_competitor(self, competitors):
+        k = 3
+        competitors = random.sample(self.population, min(k, len(self.population)))
         return max(competitors, key=lambda x: x['fitness'] if x['fitness'] is not None else -1)
     # --- END HELPER FUNCTIONS ---
 

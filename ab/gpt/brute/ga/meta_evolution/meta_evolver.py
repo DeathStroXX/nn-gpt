@@ -150,8 +150,14 @@ class MetaEvolver:
         
         if self.baseline_score == 0.0:
             print("[Meta] Running Baseline Benchmark...")
-            self.baseline_score = self.run_benchmark()["peak_accuracy"]
+            self.baseline_score = self.run_benchmark(gens=1)["peak_accuracy"]
             print(f"[Meta] Calculated Baseline: {self.baseline_score:.4f}%")
+            
+            # WIPE CHECKPOINT to force LLM to start from scratch
+            ckpt_path = os.path.join(BASE_DIR, "GenFractal_ckpt_cifar10.pkl")
+            if os.path.exists(ckpt_path):
+                os.remove(ckpt_path)
+                print("[Meta] Wiped Baseline population checkpoint to force clean start for LLM.")
         self.global_best_score = 0.0
         self.global_archive_size = 0
         
@@ -167,10 +173,12 @@ class MetaEvolver:
                 torch.cuda.ipc_collect()
         print("[Meta] GPU cleanup attempted (gc + empty_cache)")
 
-    def run_benchmark(self):
+    def run_benchmark(self, gens=None):
         import statistics
+        if gens is None:
+            gens = BENCH_GENS
         # Removed --clean to persist the GA archive and population across LLM attempts
-        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP)]
+        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(gens), "--pop", str(BENCH_POP)]
         env = os.environ.copy()
         env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
