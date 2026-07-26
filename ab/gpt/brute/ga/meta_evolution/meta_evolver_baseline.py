@@ -428,7 +428,7 @@ if __name__ == "__main__":
     if not os.environ.get("GA_EVAL_LOG"):
         _standalone_mode = True
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        logs_dir = os.path.join(BASE_DIR, "logs")
+        logs_dir = os.path.join(BASE_DIR, "logs_cifar10")
         os.makedirs(logs_dir, exist_ok=True)
         os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"baseline_evaluations_cifar10_{run_ts}.jsonl")
         print(f"[LOG] Baseline GA eval log: {os.environ['GA_EVAL_LOG']}")
@@ -508,7 +508,8 @@ if __name__ == "__main__":
             else:
                 top3_mean = peak
                 
-            archive_size = len(ga.archive)
+            # archive_size = len(ga.archive)
+            archive_size = len(getattr(ga, 'archive', ga.population))
         else:
             top3_mean = 0.0
             peak = 0.0
@@ -543,6 +544,7 @@ if __name__ == "__main__":
         try:
             from ab.gpt.brute.ga.meta_evolution.visualize_baseline_generations import main as generate_plots
             print("\n=== Generating Visualizations ===")
-            generate_plots()
+            # generate_plots()
+            generate_plots(dataset="cifar10")
         except Exception as e:
             print(f"[WARN] Visualization failed (non-fatal): {e}")

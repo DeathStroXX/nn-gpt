@@ -64,6 +64,40 @@ os.makedirs(STATS_DIR, exist_ok=True)
 
 # seen_checksums = set()
 fitness_cache = {}
+archive = {}
+
+import copy
+import random
+import numpy as np
+
+def coerce_gene_value(gene_name, value, search_space):
+    """Snap out-of-bounds gene values to nearest valid option."""
+    valid_values = search_space.get(gene_name)
+    if not valid_values:
+        return value
+    if value in valid_values:
+        return value
+    exemplar = valid_values[0]
+    if isinstance(exemplar, (int, float, np.integer, np.floating)) and isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        return min(valid_values, key=lambda candidate: abs(float(candidate) - float(value)))
+    return random.choice(valid_values)
+
+def sanitize_chromosome(chromosome, search_space):
+    """Ensure all gene values are within the search space."""
+    sanitized = chromosome.copy()
+    for gene_name in search_space:
+        if gene_name in sanitized:
+            sanitized[gene_name] = coerce_gene_value(gene_name, sanitized[gene_name], search_space)
+    return sanitized
+
+def update_archive(individual, search_space):
+    """Update the MAP-Elites archive with the individual if it's the best for its cell."""
+    cell = (individual['chromosome'].get('n_blocks', 1), individual['chromosome'].get('base_channels', 16))
+    if cell not in archive or individual['fitness'] > archive[cell]['fitness']:
+        archive[cell] = copy.deepcopy(individual)
+        print(f"  [Archive] Cell {cell} updated with fitness: {individual['fitness']:.4f}")
 
 def _log_eval(checksum, accuracy, is_cached):
     if float(accuracy) <= 0.0:
@@ -225,7 +259,9 @@ def fitness_function(chromosome: dict) -> float:
             'batch': 64,  # Increased from 32: more signal per step, avoids AccuracyException floor
             'epoch': 1,   # Short epochs for Meta-Evaluation
             'transform': "norm_32_flip",  # Native CIFAR-10 resolution (was 256 → massive slowdown)
-            'max_batches': None,  # None = full dataset (782 batches), or set int for proxy eval (e.g. 200)
+            # 'max_batches': None,  # None = full dataset (782 batches), or set int for proxy eval (e.g. 200)
+            'max_batches': 400,  # Proxy evaluation (~5x speedup for ImageNet-100)
+            'num_workers': 8,
         }
 
         # --- FIX: Delete stale training_summary.json before eval so it
@@ -450,7 +486,16 @@ if __name__ == "__main__":
         start_gen, _ = ga._load_checkpoint()
         target_gens = start_gen + args.gens
         print(f"[Run] Continuing evolution from gen {start_gen} to {target_gens}")
-        best, history = ga.run(target_gens, fitness_function)
+        
+        def fitness_with_archive(chromosome):
+            sanitized = sanitize_chromosome(chromosome, SEARCH_SPACE)
+            chromosome.update(sanitized)  # Fix in-place so GA sees clean values
+            fitness = fitness_function(chromosome)
+            # Update archive after evaluation
+            update_archive({'chromosome': chromosome, 'fitness': fitness}, SEARCH_SPACE)
+            return fitness
+
+        best, history = ga.run(target_gens, fitness_with_archive)
         
         # Save Best Architecture
         if best:
@@ -508,7 +553,7 @@ if __name__ == "__main__":
             else:
                 top3_mean = peak
                 
-            archive_size = len(ga.archive)
+            archive_size = len(archive)
         else:
             top3_mean = 0.0
             peak = 0.0

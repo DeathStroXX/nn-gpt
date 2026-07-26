@@ -256,14 +256,11 @@ def load_llm_logs(target_ts=None):
     Expected fields: method, score, reward, valid_syntax, timestamp.
     """
     if target_ts:
-        log_files = [
-            os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs_cifar10_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs_cifar100_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs_{target_ts}.jsonl"),
-            os.path.join(LOGS_DIR, f"LLM-evolution-logs_{target_ts}.jsonl"),
-            os.path.join(BASE_DIR, f"LLM-evolution-logs_{target_ts}.jsonl")
-        ]
+        log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", f"LLM-evolution-logs*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_cifar100", f"LLM-evolution-logs*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, "logs_imagenet100", f"LLM-evolution-logs*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(LOGS_DIR, f"LLM-evolution-logs*{target_ts}.jsonl")) + \
+                    glob.glob(os.path.join(BASE_DIR, f"LLM-evolution-logs*{target_ts}.jsonl"))
         log_files = [f for f in log_files if os.path.exists(f)]
     else:
         log_files = glob.glob(os.path.join(BASE_DIR, "logs_cifar10", "LLM-evolution-logs*.jsonl")) + \

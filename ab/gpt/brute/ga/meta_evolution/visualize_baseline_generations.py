@@ -11,14 +11,14 @@ from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 
-if len(sys.argv) > 1:
-    LOG_FILE = sys.argv[1]
-else:
-    log_files = glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_cifar10_*.jsonl")) + \
-                glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_*.jsonl"))
-    if not log_files:
-        raise FileNotFoundError(f"No baseline_evaluations*.jsonl found in {LOGS_DIR}")
-    LOG_FILE = max(log_files, key=os.path.getmtime)
+# if len(sys.argv) > 1:
+#     LOG_FILE = sys.argv[1]
+# else:
+#     log_files = glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_cifar10_*.jsonl")) + \
+#                 glob.glob(os.path.join(LOGS_DIR, "baseline_evaluations_*.jsonl"))
+#     if not log_files:
+#         raise FileNotFoundError(f"No baseline_evaluations*.jsonl found in {LOGS_DIR}")
+#     LOG_FILE = max(log_files, key=os.path.getmtime)
 
 GEN1_SIZE = 20
 REST_SIZE = 15
@@ -43,7 +43,28 @@ def split_into_generations(entries, gen1_size=20, rest_size=15):
         idx += rest_size
     return generations
 
-def main():
+# def main():
+#     print(f"Loading: {LOG_FILE}")
+def main(dataset=None, log_file_override=None):
+    if dataset and dataset != "cifar10":
+        target_logs_dir = os.path.join(BASE_DIR, f"logs_{dataset}")
+    else:
+        target_logs_dir = os.path.join(BASE_DIR, "logs")
+
+    if log_file_override:
+        LOG_FILE = log_file_override
+    elif len(sys.argv) > 1:
+        LOG_FILE = sys.argv[1]
+    else:
+        if dataset:
+            log_files = glob.glob(os.path.join(target_logs_dir, f"baseline_evaluations_{dataset}_*.jsonl"))
+        else:
+            log_files = glob.glob(os.path.join(target_logs_dir, "baseline_evaluations_cifar10_*.jsonl")) + \
+                        glob.glob(os.path.join(target_logs_dir, "baseline_evaluations_*.jsonl"))
+        if not log_files:
+            raise FileNotFoundError(f"No baseline_evaluations*.jsonl found in {target_logs_dir}")
+        LOG_FILE = max(log_files, key=os.path.getmtime)
+
     print(f"Loading: {LOG_FILE}")
     entries = load_evaluations(LOG_FILE)
     print(f"Total models evaluated: {len(entries)}")
@@ -199,5 +220,49 @@ def main():
     fig2.savefig(plot_time_path, dpi=150, facecolor='white', transparent=False)
     print(f"Time plot saved to: {plot_time_path}")
 
+    # --- Plot 3: Population Diversity per Generation ---
+    fig3, ax3 = plt.subplots(figsize=(14, 7), facecolor='white')
+    ax3.set_facecolor('white')
+
+    gen_acc_batches = []
+    unique_counts = []
+
+    for gen in generations:
+        accs = [e["accuracy"] for e in gen if "accuracy" in e and e["accuracy"] is not None]
+        gen_acc_batches.append(accs if accs else [0.0])
+
+        uids = [e.get("uid", e.get("checksum", "")) for e in gen]
+        unique_uids = set(uids) - {""}
+        unique_counts.append(len(unique_uids) if unique_uids else len(gen))
+
+    bp = ax3.boxplot(
+        gen_acc_batches,
+        positions=gen_numbers,
+        patch_artist=True,
+        boxprops=dict(facecolor="#2a3a6e", color="#3b82f6", alpha=0.7),
+        medianprops=dict(color="#f97316", linewidth=2),
+        whiskerprops=dict(color="#6a7aad"),
+        capprops=dict(color="#6a7aad"),
+        flierprops=dict(marker="o", color="#ef4444", alpha=0.5, markersize=4),
+    )
+
+    ax3.set_xlabel("Generation", fontsize=13)
+    ax3.set_ylabel("Accuracy Distribution (%)", fontsize=13)
+    ax3.set_title(f"{title_prefix}: Generational Population Diversity", fontsize=15, fontweight="bold")
+    ax3.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
+    ax3.set_xlim(0.5, len(generations) + 0.5)
+
+    ax3_twin = ax3.twinx()
+    ax3_twin.plot(gen_numbers, unique_counts, label="Unique Architectures Evaluated",
+                 color="#10b981", linewidth=2.0, linestyle="--", marker="o", markersize=4)
+    ax3_twin.set_ylabel("Unique Architectures Count", fontsize=13, color="#10b981")
+    ax3_twin.tick_params(axis='y', labelcolor="#10b981")
+
+    plt.tight_layout()
+    plot_div_path = os.path.join(plot_dir, "baseline_diversity_per_generation.png")
+    fig3.savefig(plot_div_path, dpi=150, facecolor='white', transparent=False)
+    print(f"Diversity plot saved to: {plot_div_path}")
+
 if __name__ == "__main__":
     main()
+

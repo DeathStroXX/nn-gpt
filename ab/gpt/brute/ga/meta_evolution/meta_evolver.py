@@ -564,7 +564,7 @@ class MetaEvolver:
                 print(f"[Meta] --> ARCHIVE EXPANDED! {new_archive_size} cells (was {self.global_archive_size})")
                 self.global_archive_size = new_archive_size
         
-        fine_tune_expected = bool(valid_syntax and reward > 0)
+        fine_tune_expected = bool(valid_syntax)
         fine_tune_started = False
         fine_tune_completed = False
         fine_tune_failed = False
@@ -599,7 +599,7 @@ class MetaEvolver:
             if len(self.success_buffer) > 20:
                 self.success_buffer.pop(0)  # Cap buffer at 20, drop oldest
         else:
-            print("--> FAILURE/REGRESSION. Skipping fine-tuning to encourage creativity.")
+            print("--> REGRESSION (Failed to beat SOTA). Fine-tuning on past successes to maintain syntax.")
 
         # Setup fallback batch sizes
         try:
@@ -674,10 +674,10 @@ class MetaEvolver:
                 finally:
                     adapter_save_end_time = datetime.now().isoformat()
                     
-        if 'bkp' in locals() and not (valid_syntax and reward > 0):
-            print("--> Reverting File.")
+        if 'bkp' in locals() and not valid_syntax:
+            print("--> Reverting File (Syntax Error).")
             shutil.copy(bkp, TARGET_FILE)
-        elif valid_syntax and reward > 0:
+        elif valid_syntax:
             ts_bkp = os.path.join(BACKUP_DIR, f"genetic_algorithm_attempt{attempt}_{'_'.join(method_names)}_acc_{new_score:.2f}.py")
             shutil.copy(TARGET_FILE, ts_bkp)
             print(f"--> Saved version history with accuracy: {ts_bkp}")
@@ -730,8 +730,8 @@ class MetaEvolver:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(log_entry) + "\n")
 
-        # Return True if this attempt was a success (valid + improved)
-        return bool(valid_syntax and reward > 0)
+        # Return True if this attempt was a success (valid syntax)
+        return bool(valid_syntax)
 
 if __name__ == "__main__":
     with open(os.path.join(BASE_DIR, "model_config.json"), "r") as f:
@@ -748,25 +748,34 @@ if __name__ == "__main__":
     #     time.sleep(2)
     # [END OLD]
 
-    # NEW — keep trying until META_ITERATIONS *successful* evolutions are achieved
     # Priority: env var META_ATTEMPTS > model_config.json meta_attempts > default 5
     META_ITERATIONS = int(os.environ.get("META_ATTEMPTS", evolver.llm.config.get("meta_attempts", 5)))
     COMPONENTS = ["combine_genes", "mutate_gene", "select_competitor", "_create_random_chromosome"]
 
     successes = 0
-    print(f"\n[Meta] Target: {META_ITERATIONS} EXACT evolutions. No retries.")
+    print(f"\n[Meta] Target: {META_ITERATIONS} evolutions with up to 5 attempts per iteration.")
     for iteration in range(META_ITERATIONS):
         component = COMPONENTS[iteration % len(COMPONENTS)]
         print(f"\n=== Iteration {iteration+1}/{META_ITERATIONS} — Evolving: {component} ===")
-        success = evolver.evolve_component(component, attempt=iteration+1, total_attempts=META_ITERATIONS)
-        if success:
-            successes += 1
-            print(f"[Meta] ✓ Iteration {iteration+1} succeeded (accuracy improved).")
-        else:
-            print(f"[Meta] ✗ Iteration {iteration+1} failed (regression or syntax error). Code reverted.")
-        time.sleep(2)
         
-    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions out of {META_ITERATIONS} strict attempts ===")
+        MAX_ATTEMPTS = 5
+        for attempt_idx in range(MAX_ATTEMPTS):
+            success = evolver.evolve_component(component, attempt=iteration+1, total_attempts=META_ITERATIONS)
+            if success:
+                successes += 1
+                print(f"[Meta] ✓ Iteration {iteration+1} (Attempt {attempt_idx+1}/{MAX_ATTEMPTS}) produced valid code. Proceeding to next iteration.")
+                break
+            else:
+                print(f"[Meta] ✗ Iteration {iteration+1} (Attempt {attempt_idx+1}/{MAX_ATTEMPTS}) failed (Syntax Error). Code reverted.")
+                
+                if attempt_idx < MAX_ATTEMPTS - 1:
+                    print(f"[Meta] Retrying {component}...")
+                    time.sleep(2)
+                else:
+                    print(f"[Meta] Exhausted all {MAX_ATTEMPTS} attempts for {component}. Moving to next iteration.")
+                    break
+        
+    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions out of {META_ITERATIONS} strict iterations ===")
     
     # --- Generate visualizations after all iterations ---
     try:

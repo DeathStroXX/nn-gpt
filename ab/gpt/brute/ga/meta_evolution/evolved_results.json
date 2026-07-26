@@ -1,13 +1,13 @@
 {
-    "peak_accuracy": 69.61,
-    "top3_mean": 68.88,
-    "archive_size": 9,
+    "peak_accuracy": 70.46,
+    "top3_mean": 69.5,
+    "archive_size": 8,
     "fitness_history": [
-        68.53,
-        68.53,
-        68.53,
-        69.61,
-        69.61
+        70.46,
+        70.46,
+        70.46,
+        70.46,
+        70.46
     ],
-    "total_generations": 25
+    "total_generations": 20
 }

@@ -1,13 +1,7 @@
 import os
-import warnings
 import argparse
 import hashlib
 import json
-import copy
-import numpy as np
-from ab.gpt.brute.ga.meta_evolution.llm_loader import get_dataset_name, get_model_short_name
-
-warnings.filterwarnings("ignore")
 
 class NumpyEncoder(json.JSONEncoder):
     """Handle numpy scalar types that are not JSON serializable."""
@@ -90,7 +84,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # This is the folder where unique fractal models will be saved
 ARCH_DIR = os.path.join(BASE_DIR, 'ga_fractal_arch_imagenet100') 
 STATS_DIR = os.path.join(BASE_DIR, 'statsimagenet100')
-# CHECKPOINT = 'GenFractal_ckpt.pkl'
 CHECKPOINT = os.path.join(BASE_DIR, 'GenFractal_imagenet100_ckpt.pkl')
 BEST_STATS_DIR = os.path.join(BASE_DIR, 'best_fractal_statsimagenet100')
 
@@ -99,13 +92,15 @@ os.makedirs(STATS_DIR, exist_ok=True)
 
 # seen_checksums = set()
 fitness_cache = {}
-
-# --- MAP-Elites Archive (managed at runner level, not inside GA) ---
 archive = {}
+
+import copy
+import random
+import numpy as np
 
 def coerce_gene_value(gene_name, value, search_space):
     """Snap out-of-bounds gene values to nearest valid option."""
-    valid_values = search_space[gene_name]
+    valid_values = search_space.get(gene_name)
     if not valid_values:
         return value
     if value in valid_values:
@@ -154,7 +149,7 @@ def _load_existing_checksums():
     """Scan stats/ directory for previously evaluated models and cache their fitness."""
     count = 0
     # prefix = "img-classification_cifar_GenFractalNet-"   # BUG: missing '-10', never matched any folder
-    # prefix = "img-classification_imagenet-100_GenFractalNet-"
+    # prefix = "img-classification_cifar-100_GenFractalNet-"
     prefix = "img-classification_imagenet-100_acc_GenFractalNet-"
     if os.path.isdir(STATS_DIR):
         for name in os.listdir(STATS_DIR):
@@ -291,10 +286,12 @@ def fitness_function(chromosome: dict) -> float:
         eval_prm = {
             'lr': chromosome['lr'],
             'momentum': chromosome['momentum'],
-            'batch': 64,  # Increased from 32: more signal per step, avoids AccuracyException floor
+            'batch': 64,
             'epoch': 1,   # Short epochs for Meta-Evaluation
             'transform': "norm_32_flip",  # Native CIFAR-10 resolution (was 256 → massive slowdown)
-            'max_batches': None,  # None = full dataset (782 batches), or set int for proxy eval (e.g. 200)
+            # 'max_batches': None,
+            'max_batches': 400,  # Proxy evaluation (~5x speedup for ImageNet-100)
+            'num_workers': 8,
         }
 
         # --- FIX: Delete stale training_summary.json before eval so it
@@ -373,7 +370,7 @@ def fitness_function(chromosome: dict) -> float:
         
         # Save exact requested stats format to a JSON folder structure
         # One JSON file per epoch: 1.json, 2.json, ..., N.json
-        # model_stats_dir_name = f"img-classification_imagenet-100_GenFractalNet-{model_checksum}"
+        # model_stats_dir_name = f"img-classification_cifar-100_GenFractalNet-{model_checksum}"
         model_stats_dir_name = f"img-classification_imagenet-100_acc_GenFractalNet-{model_checksum}"
         model_stats_dir_path = os.path.join(STATS_DIR, model_stats_dir_name)
         os.makedirs(model_stats_dir_path, exist_ok=True)
@@ -503,9 +500,7 @@ if __name__ == "__main__":
         run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         logs_dir = os.path.join(BASE_DIR, "logs_imagenet100")
         os.makedirs(logs_dir, exist_ok=True)
-        _dataset_name = get_dataset_name(__file__)
-        _model_name = get_model_short_name()
-        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_{_dataset_name}_{_model_name}_{run_ts}.jsonl")
+        os.environ["GA_EVAL_LOG"] = os.path.join(logs_dir, f"ga_evaluations_imagenet100_{run_ts}.jsonl")
         print(f"[LOG] GA eval log: {os.environ['GA_EVAL_LOG']}")
 
     if args.clean and os.path.exists(CHECKPOINT):
@@ -525,8 +520,6 @@ if __name__ == "__main__":
         start_gen, _ = ga._load_checkpoint()
         target_gens = start_gen + args.gens
         print(f"[Run] Continuing evolution from gen {start_gen} to {target_gens}")
-
-        # Wrap fitness_function to sanitize chromosomes and update MAP-Elites archive
         def fitness_with_archive(chromosome):
             sanitized = sanitize_chromosome(chromosome, SEARCH_SPACE)
             chromosome.update(sanitized)  # Fix in-place so GA sees clean values
@@ -547,7 +540,7 @@ if __name__ == "__main__":
 
              # Copy Winning Stats
              best_checksum = uuid4(best_code)
-             # best_folder_name = f"img-classification_imagenet-100_GenFractalNet-{best_checksum}"
+             # best_folder_name = f"img-classification_cifar-100_GenFractalNet-{best_checksum}"
              best_folder_name = f"img-classification_imagenet-100_acc_GenFractalNet-{best_checksum}"
              src_stats_path = os.path.join(STATS_DIR, best_folder_name)
              dst_stats_path = os.path.join(BEST_STATS_DIR, best_folder_name)

@@ -3,15 +3,15 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.003
-# Momentum: 0.85
+# LR: 0.01
+# Momentum: 0.75
 # Activation: SiLU
 # Kernel: 5
 # Pooling: Max
 # Conv Type: Standard
 # Norm Type: BatchNorm
 # Optimizer: SGD
-# FC Dropout: 0.05
+# FC Dropout: 0.3
 
 # --- MANDATORY FOR EVAL ENGINE ---
 def supported_hyperparameters():
@@ -19,7 +19,7 @@ def supported_hyperparameters():
 
 # --- Helper Classes ---
 class FractalDropPath(nn.Module):
-    def __init__(self, drop_prob: float = 0.1):
+    def __init__(self, drop_prob: float = 0.0):
         super().__init__()
         self.drop_prob = drop_prob
 
@@ -81,7 +81,7 @@ class FractalBackbone(nn.Module):
         total_blocks = int(4)
 
         for i in range(total_blocks):
-            blocks.append(FractalBlock(int(2), cur_chan, 0.1))
+            blocks.append(FractalBlock(int(2), cur_chan, 0.0))
             pools.append(nn.MaxPool2d(2))
 
             if i < total_blocks - 1:
@@ -137,7 +137,7 @@ class Net(nn.Module):
             dim_fused = self.features(dummy).shape[1]
         self.train()
 
-        self.fc_dropout = nn.Dropout(p=0.05)
+        self.fc_dropout = nn.Dropout(p=0.3)
         self.fc = nn.Linear(dim_fused, n_classes)
         self.to(device)
 

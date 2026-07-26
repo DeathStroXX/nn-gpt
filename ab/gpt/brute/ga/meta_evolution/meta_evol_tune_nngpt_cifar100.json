@@ -9,9 +9,6 @@
     "ttlSecondsAfterFinished": 86400,
     "template": {
       "spec": {
-        "nodeSelector": {
-          "kubernetes.io/hostname": "dgx-h100"
-        },
         "tolerations": [
           {
             "key": "dgx",
@@ -81,8 +78,8 @@
               },
               "limits": {
                 "nvidia.com/gpu": 1,
-                "cpu": 16,
-                "memory": "96Gi"
+                "cpu": 10,
+                "memory": "48Gi"
               }
             },
             "volumeMounts": [
