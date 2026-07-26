@@ -139,8 +139,12 @@ def _extract_log_timestamp(target_ts=None):
 
     # 2. If a specific timestamp is passed, find the most recent file matching it
     if target_ts:
-        files = glob.glob(os.path.join(LOGS_DIR, "ga_evaluations_*.jsonl"))
-        for f in files:
+        search_dirs = [LOGS_DIR, os.path.join(BASE_DIR, "logs_cifar10"), os.path.join(BASE_DIR, "logs_cifar100")]
+        all_files = []
+        for d in search_dirs:
+            all_files.extend(glob.glob(os.path.join(d, "ga_evaluations_*.jsonl")))
+            
+        for f in all_files:
             if target_ts and target_ts in f:
                 base = os.path.basename(f)
                 dataset = _determine_dataset(base)

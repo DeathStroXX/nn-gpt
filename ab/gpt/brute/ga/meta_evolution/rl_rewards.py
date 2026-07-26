@@ -6,38 +6,31 @@ def calculate_meta_reward(current_score, best_ever_score, baseline_score, top3_m
         return -1.0
 
     reward = 0.0
-    delta_baseline = current_score - baseline_score
 
-    # 1. Baseline Regression Penalty (Crucial to prevent Model Collapse)
-    if delta_baseline < 0:
-        # Penalize bad code so the LLM doesn't learn mediocrity
-        penalty = delta_baseline * 0.2
-        reward += penalty
-        print(f"   [RL] PENALTY: Regression below baseline ({delta_baseline:.2f}%). Penalty: {penalty:.4f}")
-        return reward # Immediately return, do not reward density or novelty if it's a regression!
+    # [MODIFIED_FOR_INNOVATION] Rewrote reward logic to remove baseline regression penalty 
+    # and SOTA failure penalty. Priority reordered: Novelty (Primary) > SOTA (Secondary) > Density.
 
-    # 2. Primary Reward: Delta SOTA (Frontier Expansion)
+    # 1. PRIORITY 1: Behavioral Novelty (MAP-Elites Innovation)
+    if archive_novelty > 0:
+        # Heavily reward finding new, unique architectures
+        novelty_bonus = archive_novelty * 1.5
+        reward += novelty_bonus
+        print(f"   [RL] PRIMARY (NOVELTY): Archive Novelty ({archive_novelty} cells updated). Bonus: {novelty_bonus:.4f}")
+
+    # 2. PRIORITY 2: Delta SOTA (Frontier Expansion)
     delta_sota = current_score - best_ever_score
     if delta_sota > 0:
         sota_bonus = math.log1p(delta_sota) * 5.0
         reward += sota_bonus
-        print(f"   [RL] PRIMARY: +{delta_sota:.2f}% SOTA Improvement! Bonus: {sota_bonus:.4f}")
-    else:
-        sota_penalty = -1.0
-        reward += sota_penalty
-        print(f"   [RL] PENALTY: Failed to beat previous SOTA. Penalty: {sota_penalty:.4f}")
+        print(f"   [RL] SECONDARY (SOTA): +{delta_sota:.2f}% SOTA Improvement! Bonus: {sota_bonus:.4f}")
     
-    # 3. Secondary Reward: Quality Density (Top-3 Mean)
+    # 3. PRIORITY 3: Quality Density (Top-3 Mean)
     if top3_mean > 0:
         density_reward = (top3_mean / 100.0) * 1.5 
         reward += density_reward
-        print(f"   [RL] SECONDARY: Top-3 Quality ({top3_mean:.2f}%). Bonus: {density_reward:.4f}")
+        print(f"   [RL] TERTIARY (DENSITY): Top-3 Quality ({top3_mean:.2f}%). Bonus: {density_reward:.4f}")
 
-    # 4. Tertiary Reward: Behavioral Novelty (MAP-Elites)
-    if archive_novelty > 0:
-        novelty_bonus = archive_novelty * 0.5
-        reward += novelty_bonus
-        print(f"   [RL] TERTIARY: Archive Novelty ({archive_novelty} cells updated). Bonus: {novelty_bonus:.4f}")
+    # (Removed baseline regression penalty and failed SOTA penalty to encourage risk-taking)
 
     reward = min(reward, 15.0) 
     print(f"   [RL] Total Reward: {reward:.4f}")

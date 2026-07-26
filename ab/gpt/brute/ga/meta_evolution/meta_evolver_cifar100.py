@@ -415,17 +415,12 @@ class MetaEvolver:
             full_code=skel_full_code,
             method_names=", ".join(method_names),
             task_specific_instructions="\n".join([INSTRUCTIONS.get(n, "") for n in method_names]),
-            code=orig_code,
-            history_str=history_str,
-            hall_of_fame_str=hall_of_fame_str,
-            global_best_score=self.global_best_score,
-            global_archive_size=self.global_archive_size,
-            best_chromosome_str=best_chromosome_str
+            code=orig_code
         )
         
-        # Flat temperature as in June 17 setup
-        temperature = 0.8
-        print(f"[Meta] Generation Temperature: {temperature:.2f}")
+        # [MODIFIED_FOR_INNOVATION] Increased temperature from 0.8 to 0.9 to boost creativity. Revert to 0.8 if syntax errors occur too often.
+        temperature = 0.9
+        print(f"[Meta] Generation Temperature (BOOSTED): {temperature:.2f}")
         
         raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
         

@@ -409,9 +409,9 @@ class MetaEvolver:
             code=orig_code
         )
         
-        # Flat temperature as in June 17 setup
-        temperature = 0.8
-        print(f"[Meta] Generation Temperature: {temperature:.2f}")
+        # [MODIFIED_FOR_INNOVATION] Increased temperature from 0.8 to 0.9 to boost creativity. Revert to 0.8 if syntax errors occur too often.
+        temperature = 0.9
+        print(f"[Meta] Generation Temperature (BOOSTED): {temperature:.2f}")
         
         raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
         
