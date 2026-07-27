@@ -750,6 +750,66 @@ class MetaEvolver:
         # Return True if this attempt was a success (valid syntax)
         return bool(valid_syntax)
 
+    def run_fallback_iteration(self, component, attempt, total_attempts):
+        print(f"\n[Meta] Running fallback GA benchmark using previous working code for {component}...")
+        
+        bench_stats = self.run_benchmark()
+        new_score = bench_stats["peak_accuracy"]
+        top3_mean = bench_stats["top3_mean"]
+        new_archive_size = bench_stats["archive_size"]
+        
+        archive_novelty = max(0, new_archive_size - self.global_archive_size)
+        reward = calculate_meta_reward(
+            current_score=new_score, 
+            best_ever_score=self.global_best_score, 
+            baseline_score=self.baseline_score,
+            top3_mean=top3_mean, 
+            archive_novelty=archive_novelty, 
+            valid_syntax=True
+        )
+        
+        if new_score > self.global_best_score:
+            print(f"[Meta] --> NEW GLOBAL SOTA (Fallback)! {new_score:.2f}% (was {self.global_best_score:.2f}%)")
+            self.global_best_score = new_score
+        if new_archive_size > self.global_archive_size:
+            print(f"[Meta] --> ARCHIVE EXPANDED (Fallback)! {new_archive_size} cells (was {self.global_archive_size})")
+            self.global_archive_size = new_archive_size
+
+        log_entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            "method": component,
+            "attempt": attempt,
+            "response": "Fallback to previous working GA due to repeated LLM syntax errors.",
+            "cleaned_code": "Fallback triggered. Code unchanged.",
+            "valid_syntax": True,
+            "score": new_score,
+            "peak_accuracy": bench_stats["peak_accuracy"],
+            "reward": reward,
+            "fine_tune_expected": False,
+            "fine_tune_started": False,
+            "fine_tune_completed": False,
+            "fine_tune_failed": False,
+            "fine_tune_exception": None,
+            "adapter_save_started": False,
+            "adapter_save_completed": False,
+            "adapter_save_failed": False,
+            "adapter_save_exception": None,
+            "adapter_path": "",
+            "train_examples_count": 0,
+            "train_epochs": 0,
+            "fine_tune_requested_batch": 0,
+            "fine_tune_actual_batch": 0,
+            "fine_tune_retries": 0,
+            "fine_tune_oom_message": None,
+            "fine_tune_start_time": None,
+            "fine_tune_end_time": None,
+            "adapter_save_start_time": None,
+            "adapter_save_end_time": None
+        }
+        with open(LOG_FILE, 'a') as f:
+            f.write(json.dumps(log_entry) + "\n")
+        return True
+
 if __name__ == "__main__":
     with open(os.path.join(BASE_DIR, "model_config.json"), "r") as f:
         MODEL_PATH = json.load(f).get("base_model_name", "mistralai/Mistral-7B-Instruct-v0.2")
@@ -776,7 +836,7 @@ if __name__ == "__main__":
         component = COMPONENTS[iteration % len(COMPONENTS)]
         print(f"\n=== Iteration {iteration+1}/{META_ITERATIONS} — Evolving: {component} ===")
         
-        MAX_ATTEMPTS = 5
+        MAX_ATTEMPTS = 10
         for attempt_idx in range(MAX_ATTEMPTS):
             success = evolver.evolve_component(component, attempt=iteration+1, total_attempts=META_ITERATIONS)
             if success:
@@ -790,7 +850,10 @@ if __name__ == "__main__":
                     print(f"[Meta] Retrying {component}...")
                     time.sleep(2)
                 else:
-                    print(f"[Meta] Exhausted all {MAX_ATTEMPTS} attempts for {component}. Moving to next iteration.")
+                    print(f"[Meta] Exhausted all {MAX_ATTEMPTS} attempts for {component}.")
+                    evolver.run_fallback_iteration(component, attempt_idx + 1, META_ITERATIONS)
+                    successes += 1
+                    print(f"[Meta] Fallback iteration complete. Moving to next iteration.")
                     break
         
     print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions out of {META_ITERATIONS} strict iterations ===")

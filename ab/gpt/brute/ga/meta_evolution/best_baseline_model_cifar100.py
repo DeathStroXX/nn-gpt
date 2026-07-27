@@ -3,10 +3,10 @@ import torch.nn as nn
 from typing import List
 
 # --- HASH IDENTIFIERS (Ensures unique UUIDs for caching) ---
-# LR: 0.004
-# Momentum: 0.88
+# LR: 0.003
+# Momentum: 0.92
 # Activation: SiLU
-# Kernel: 5
+# Kernel: 7
 # Pooling: Max
 # Conv Type: Standard
 # Norm Type: BatchNorm
@@ -40,7 +40,7 @@ class FractalBlock(nn.Module):
         channels = int(channels)  
 
         activation_layer = nn.SiLU(inplace=True)
-        conv_layer = nn.Conv2d(channels, channels, kernel_size=5, padding=2, bias=False)
+        conv_layer = nn.Conv2d(channels, channels, kernel_size=7, padding=3, bias=False)
         norm_layer = nn.BatchNorm2d(channels)
 
         # Assemble Convolutional Sequence
