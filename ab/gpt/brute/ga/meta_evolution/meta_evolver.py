@@ -79,10 +79,15 @@ SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 
 BASE_PROMPT_TEMPLATE = """
 You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-10.
+CRITICAL MANDATE: Your ONLY goal is RADICAL ARCHITECTURAL INNOVATION. Do not make small incremental changes.
+You are heavily penalized if you do not generate completely novel combinations of layers, activations, and topologies.
 
 === SEARCH SPACE ===
 The GA optimizes the following SEARCH_SPACE:
 {search_space}
+
+=== BASELINE CHROMOSOME (STARTING POINT) ===
+{best_chromosome}
 
 === GA SCRIPT CONTEXT (READ-ONLY) ===
 Below is the FULL CODE of the current Genetic Algorithm. 
@@ -96,6 +101,7 @@ DO NOT rewrite this script. It is strictly for context.
 === YOUR SPECIFIC TASK ===
 You must intelligently improve ONLY the following specific function(s): `{method_names}`.
 {task_specific_instructions}
+Force the GA operators to break out of local minima and aggressively explore the search space.
 
 Current implementation:
 <current_function>
@@ -138,12 +144,12 @@ class MetaEvolver:
         os.makedirs(BACKUP_DIR, exist_ok=True)
         
         self.baseline_score = 0.0
-        best_info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info.json")
         if os.path.exists(best_info_path):
             try:
                 with open(best_info_path, 'r') as f:
                     best_data = json.load(f)
-                    self.baseline_score = float(best_data.get("peak_accuracy", 0.0))
+                    self.baseline_score = float(best_data.get("fitness", 0.0))
                     print(f"[Meta] Loaded Baseline Score: {self.baseline_score:.2f}%")
             except Exception:
                 pass
@@ -391,7 +397,7 @@ class MetaEvolver:
 
         # Load best chromosome if available
         best_chromosome_str = "None found yet."
-        best_info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info.json")
         if os.path.exists(best_info_path):
             try:
                 with open(best_info_path, 'r') as f:
@@ -403,6 +409,7 @@ class MetaEvolver:
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
             search_space=SEARCH_SPACE_STR,
+            best_chromosome=best_chromosome_str,
             full_code=skel_full_code,
             method_names=", ".join(method_names),
             task_specific_instructions="\n".join([INSTRUCTIONS.get(n, "") for n in method_names]),

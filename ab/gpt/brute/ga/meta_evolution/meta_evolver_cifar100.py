@@ -88,10 +88,19 @@ SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 
 BASE_PROMPT_TEMPLATE = """
 You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-100.
+CRITICAL MANDATE: Your ONLY goal is RADICAL ARCHITECTURAL INNOVATION. Do not make small incremental changes.
+You are heavily penalized if you do not generate completely novel combinations of layers, activations, and topologies.
+
+=== FEEDBACK FROM RECENT FAILED ATTEMPTS ===
+{history_str}
+Study these failures carefully. DO NOT repeat the same mistakes or generate the exact same code.
 
 === SEARCH SPACE ===
 The GA optimizes the following SEARCH_SPACE:
 {search_space}
+
+=== BASELINE CHROMOSOME (STARTING POINT) ===
+{best_chromosome}
 
 === GA SCRIPT CONTEXT (READ-ONLY) ===
 Below is the FULL CODE of the current Genetic Algorithm. 
@@ -105,6 +114,7 @@ DO NOT rewrite this script. It is strictly for context.
 === YOUR SPECIFIC TASK ===
 You must intelligently improve ONLY the following specific function(s): `{method_names}`.
 {task_specific_instructions}
+Force the GA operators to break out of local minima and aggressively explore the search space.
 
 Current implementation:
 <current_function>
@@ -147,12 +157,12 @@ class MetaEvolver:
         os.makedirs(BACKUP_DIR, exist_ok=True)
         
         self.baseline_score = 0.0
-        best_info_path = os.path.join(BASE_DIR, "best_fractal_info_cifar100.json")
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info_cifar100.json")
         if os.path.exists(best_info_path):
             try:
                 with open(best_info_path, 'r') as f:
                     best_data = json.load(f)
-                    self.baseline_score = float(best_data.get("peak_accuracy", 0.0))
+                    self.baseline_score = float(best_data.get("fitness", 0.0))
                     print(f"[Meta] Loaded Baseline Score: {self.baseline_score:.2f}%")
             except Exception:
                 pass
@@ -358,18 +368,18 @@ class MetaEvolver:
             
             # Filter history to only include attempts for the current component!
             component_name = method_names[0] if isinstance(method_names, (list, tuple)) else method_names
-            relevant_history = [h for h in self.attempt_history if component_name in h.get('code', '') or component_name == "full"]
+            relevant_history = [h for h in self.attempt_history if (component_name in h.get('code', '') or component_name == "full") and h.get("status") != "Success"]
             
             for idx, h in enumerate(relevant_history[-2:]):
                 status = h.get("status", "Unknown")
-                score = h.get("score", 0.0)
+                reward = h.get("reward", 0.0)
                 trace = h.get("error_trace", "")
                 if len(trace) > 150: trace = trace[-150:] + "\n... (truncated)"
-                trace_str = f"\nError Trace:\n{trace}" if trace else ""
+                trace_str = f"\nError Trace:\n{trace}" if trace else "\nError Trace:\n(None)"
                 
                 hist_code = h.get('code', '')
                 if len(hist_code) > 800: hist_code = hist_code[:800] + "\n... (truncated)"
-                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}{trace_str}\nCode:\n```python\n{hist_code}\n```")
+                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nReward: {reward:.2f}{trace_str}\nCode:\n```python\n{hist_code}\n```")
             
             if history_lines:
                 history_str = "\n\n".join(history_lines)
@@ -400,7 +410,7 @@ class MetaEvolver:
 
         # Load best chromosome if available
         best_chromosome_str = "None found yet."
-        best_info_path = os.path.join(BASE_DIR, "best_fractal_info_cifar100.json")
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info_cifar100.json")
         if os.path.exists(best_info_path):
             try:
                 with open(best_info_path, 'r') as f:
@@ -411,7 +421,9 @@ class MetaEvolver:
 
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
+            history_str=history_str,
             search_space=SEARCH_SPACE_STR,
+            best_chromosome=best_chromosome_str,
             full_code=skel_full_code,
             method_names=", ".join(method_names),
             task_specific_instructions="\n".join([INSTRUCTIONS.get(n, "") for n in method_names]),
@@ -455,6 +467,7 @@ class MetaEvolver:
                 replacements.append((span, indent, ""))
 
         valid_syntax = False
+        bench_stats = {"top3_mean": 0.0, "peak_accuracy": 0.0, "archive_size": self.global_archive_size, "error_trace": ""}
         try:
             test_full = full_code
             for span, indent_col, new_code in replacements:
@@ -488,10 +501,9 @@ class MetaEvolver:
             ast.parse(test_full)
             valid_syntax = True
         except SyntaxError as e:
+            import traceback
+            bench_stats["error_trace"] = traceback.format_exc()
             print(f"[Meta] Syntax Error: {e}")
-
-        # new_score = 0.0
-        bench_stats = {"top3_mean": 0.0, "peak_accuracy": 0.0, "archive_size": self.global_archive_size}
         
         if valid_syntax:
             target_filename = os.path.basename(TARGET_FILE)
@@ -546,6 +558,8 @@ class MetaEvolver:
                         raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space {SEARCH_SPACE[gene]}")
                 print("[Meta] Runtime smoke test PASSED (all components validated).")
             except Exception as e:
+                import traceback
+                bench_stats["error_trace"] = traceback.format_exc()
                 print(f"[Meta] Runtime smoke test FAILED: {e}")
                 print("---> Reverting file and skipping benchmark.")
                 shutil.copy(bkp, TARGET_FILE)
@@ -709,6 +723,7 @@ class MetaEvolver:
         self.attempt_history.append({
             "status": status, 
             "score": new_score, 
+            "reward": reward,
             "code": combined_code, 
             "error_trace": bench_stats.get("error_trace", "") if not valid_syntax or reward <= 0 else ""
         })

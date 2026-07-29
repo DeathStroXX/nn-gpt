@@ -5,33 +5,23 @@ def calculate_meta_reward(current_score, best_ever_score, baseline_score, top3_m
         print("   [RL] Penalty: Invalid Syntax/Crash.")
         return -1.0
 
-    reward = 0.0
-
-    # [MODIFIED_FOR_INNOVATION] Rewrote reward logic to remove baseline regression penalty 
-    # and SOTA failure penalty. Priority reordered: Novelty (Primary) > SOTA (Secondary) > Density.
-
-    # 1. PRIORITY 1: Behavioral Novelty (MAP-Elites Innovation)
+    # [INNOVATION_ONLY] We only reward the LLM for producing novel architectures that map to new MAP-Elites cells.
     if archive_novelty > 0:
-        # Heavily reward finding new, unique architectures
-        novelty_bonus = archive_novelty * 1.5
-        reward += novelty_bonus
-        print(f"   [RL] PRIMARY (NOVELTY): Archive Novelty ({archive_novelty} cells updated). Bonus: {novelty_bonus:.4f}")
+        # Exponential reward for high novelty, ensuring it is at least 10x the penalty
+        reward = (archive_novelty * 2.0) + 10.0
+        print(f"   [RL] INNOVATION (SUCCESS): Found {archive_novelty} novel architectures! Reward: {reward:.4f}")
+    else:
+        # Penalty for stagnation (no new architectures discovered)
+        reward = -1.0
+        print(f"   [RL] INNOVATION (STAGNATION): Zero novelty found. Reward: {reward:.4f}")
 
-    # 2. PRIORITY 2: Delta SOTA (Frontier Expansion)
-    delta_sota = current_score - best_ever_score
-    if delta_sota > 0:
-        sota_bonus = math.log1p(delta_sota) * 5.0
-        reward += sota_bonus
-        print(f"   [RL] SECONDARY (SOTA): +{delta_sota:.2f}% SOTA Improvement! Bonus: {sota_bonus:.4f}")
-    
-    # 3. PRIORITY 3: Quality Density (Top-3 Mean)
+    # Secondary Reward: Quality Density (Top-3 Mean)
+    # User requested this to be kept, while ensuring novelty remains the dominant reward.
     if top3_mean > 0:
         density_reward = (top3_mean / 100.0) * 1.5 
         reward += density_reward
-        print(f"   [RL] TERTIARY (DENSITY): Top-3 Quality ({top3_mean:.2f}%). Bonus: {density_reward:.4f}")
+        print(f"   [RL] SECONDARY: Top-3 Quality Density ({top3_mean:.2f}%). Bonus: {density_reward:.4f}")
 
-    # (Removed baseline regression penalty and failed SOTA penalty to encourage risk-taking)
-
-    reward = min(reward, 15.0) 
+    reward = min(reward, 25.0) 
     print(f"   [RL] Total Reward: {reward:.4f}")
     return reward
