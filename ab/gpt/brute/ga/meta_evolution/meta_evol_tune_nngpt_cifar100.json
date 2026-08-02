@@ -9,9 +9,6 @@
     "ttlSecondsAfterFinished": 86400,
     "template": {
       "spec": {
-        "nodeSelector": {
-          "kubernetes.io/hostname": "dgx-h100"
-        },
         "tolerations": [
           {
             "key": "dgx",
@@ -28,7 +25,7 @@
               "-c"
             ],
             "args": [
-              "cd /a/mm && if [ ! -d \"nn-dataset\" ]; then git clone https://github.com/ABrain-One/nn-dataset; else git -C nn-dataset pull; fi && pip install \"torchao==0.15.0\" --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && pip install nn-dataset --no-deps && export PYTHONPATH=/a/mm && site_pkg=$(python3 -c 'import site; print(site.getusersitepackages())') && mkdir -p /a/mm/ab/nn && cp -rn $site_pkg/ab/nn/* /a/mm/ab/nn/ || true && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100 && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_cifar100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_cifar100/pod_${RUN_TS}.log"
+              "cd /a/mm && (pip uninstall -y flash-attn || true) && pip install \"torchao==0.15.0\" --upgrade --extra-index-url https://download.pytorch.org/whl/cu126 && export PYTHONPATH=/a/mm && export RUN_TS=$(date +%Y-%m-%d_%H-%M-%S) && export DATASET=cifar100 && mkdir -p /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET} && export MODEL_NAME=$(python3 -c \"import json; full=json.load(open('/a/mm/ab/gpt/brute/ga/meta_evolution/model_config.json')).get('base_model_name', 'unknown').lower(); print('qwen' if 'qwen' in full else 'deepseek' if 'deepseek' in full else 'mistral' if 'mistral' in full else full.split('/')[0])\") && python3 -u -m ab.gpt.brute.ga.meta_evolution.meta_evolver_cifar100 2>&1 | tee /a/mm/ab/gpt/brute/ga/meta_evolution/logs_${DATASET}/meta_pod_${DATASET}_${MODEL_NAME}_${RUN_TS}.log"
             ],
             "env": [
               {
@@ -53,7 +50,7 @@
               },
               {
                 "name": "META_ATTEMPTS",
-                "value": "10"
+                "value": "5"
               },
               {
                 "name": "PYTORCH_CUDA_ALLOC_CONF",
@@ -81,8 +78,8 @@
               },
               "limits": {
                 "nvidia.com/gpu": 1,
-                "cpu": 16,
-                "memory": "96Gi"
+                "cpu": 10,
+                "memory": "48Gi"
               }
             },
             "volumeMounts": [
@@ -97,6 +94,10 @@
               {
                 "mountPath": "/a/mm/data",
                 "name": "v1"
+              },
+              {
+                "mountPath": "/a/mm/nn-dataset",
+                "name": "v2"
               }
             ]
           }
@@ -121,6 +122,13 @@
             "name": "v1",
             "hostPath": {
               "path": "/shared/local/data/a-group-automl/data",
+              "type": "Directory"
+            }
+          },
+          {
+            "name": "v2",
+            "hostPath": {
+              "path": "/shared/ssd/home/b-a-singh/Thesis/NN-DATASET/C1/nn-dataset",
               "type": "Directory"
             }
           }

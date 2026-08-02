@@ -12,7 +12,9 @@ SEARCH_SPACE = {
     'n_blocks': [2, 3, 4],                
     
     # Stochastic & Regularization
-    'dropout_prob': [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
+    # 'dropout_prob': [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
+    # 'fc_dropout': [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
+    'dropout_prob': [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
     'fc_dropout': [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5],
     
     # Hyperparameters

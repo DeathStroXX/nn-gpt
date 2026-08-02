@@ -1,4 +1,5 @@
 {
+    "_qwen_base_model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
     "base_model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
     "num_epochs": 100,
     "num_test_epochs": 2,

@@ -11,9 +11,30 @@ def _load_model_config():
         raise FileNotFoundError(f"[Config] model_config.json not found at {config_path}. Please create it.")
     with open(config_path, "r") as f:
         config = json.load(f)
-    config["context_length"] = config.get("default_context_length", 4096)
+    config["context_length"] = config.get("context_length", 4096)
     print(f"[Config] Loaded model_config.json  (context_length={config['context_length']})")
     return config
+
+def get_model_short_name():
+    try:
+        config = _load_model_config()
+        full = config.get("base_model_name", "unknown").lower()
+        if "qwen" in full: return "qwen"
+        if "deepseek" in full: return "deepseek"
+        if "mistral" in full: return "mistral"
+        return full.split('/')[0]
+    except Exception:
+        return "unknown"
+
+def get_dataset_name(script_path):
+    filename = os.path.basename(script_path)
+    if "cifar100" in filename:
+        return "cifar100"
+    elif "imagenet100" in filename:
+        return "imagenet100"
+    else:
+        return "cifar10"
+
 
 class LocalLLMLoader:
     def __init__(self, model_path=None, use_quantization=True, adapter_path=None):
@@ -45,7 +66,7 @@ class LocalLLMLoader:
             self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         except:
              # Fallback to local path if simple name fails
-             self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+             self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=False)
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -70,7 +91,7 @@ class LocalLLMLoader:
                 quantization_config=bnb_config,
                 device_map=device_map,
                 trust_remote_code=True,
-                local_files_only=True,
+                local_files_only=False,
                  torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
             )
 
@@ -87,7 +108,7 @@ class LocalLLMLoader:
 
         if adapter_weights_exist:
             print(f"[LoRA] Loading existing adapters from {adapter_path}")
-            self.model = PeftModel.from_pretrained(self.model, adapter_path, is_trainable=True, local_files_only=True)
+            self.model = PeftModel.from_pretrained(self.model, adapter_path, is_trainable=True, local_files_only=False)
         else:
             if adapter_path and os.path.exists(adapter_path):
                 print(f"[LoRA] Adapter directory exists at {adapter_path} but no weight files found. Initializing fresh adapters...")

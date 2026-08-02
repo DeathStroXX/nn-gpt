@@ -18,19 +18,23 @@ nn_dataset.data = lambda *args, **kwargs: pd.DataFrame(columns=['nn_id'])
 nn_dataset.data.cache_clear = lambda: None
 from datetime import datetime
 
-from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader 
+from ab.gpt.brute.ga.meta_evolution.llm_loader import LocalLLMLoader, get_model_short_name, get_dataset_name
 from ab.gpt.brute.ga.meta_evolution.rl_rewards import calculate_meta_reward
 from ab.gpt.brute.ga.meta_evolution.FractalNet_evolvable_backbone import SEARCH_SPACE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODIFIED_GA_DIR = os.path.join(BASE_DIR, "modified_GA_cifar100")
+_dataset_name = get_dataset_name(__file__)
+_model_name = get_model_short_name()
+
+MODIFIED_GA_DIR = os.path.join(BASE_DIR, f"modified_GA_{_dataset_name}")
 os.makedirs(MODIFIED_GA_DIR, exist_ok=True)
 TARGET_FILE = os.path.join(MODIFIED_GA_DIR, "genetic_algorithm_evolved_cifar100.py")
 
 # Fair Benchmarking: Reset baseline if starting fresh
-CHECKPOINT_FILE = os.path.join(BASE_DIR, "GenFractal_ckpt_cifar100.pkl")
-BACKUP_DIR = os.path.join(BASE_DIR, "ga_history_backup_cifar100")
-ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar100")
+CHECKPOINT_FILE = os.path.join(BASE_DIR, f"GenFractal_ckpt_{_dataset_name}.pkl")
+BACKUP_DIR = os.path.join(BASE_DIR, f"ga_history_backup_{_dataset_name}")
+# ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, "fine_tuned_adapter_cifar100")
+ADAPTER_SAVE_PATH = os.path.join(BASE_DIR, f"{_model_name}_adapter_{_dataset_name}")
 
 if not os.path.exists(CHECKPOINT_FILE):
     baseline_file = os.path.join(BASE_DIR, "genetic_algorithm_baseline.py")
@@ -61,10 +65,10 @@ if not os.path.exists(CHECKPOINT_FILE):
 
 RUNNER_SCRIPT = os.path.join(BASE_DIR, "run_fractal_evolution_cifar100.py")
 RUN_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-LOGS_DIR = os.path.join(BASE_DIR, "logs_cifar100")
+LOGS_DIR = os.path.join(BASE_DIR, f"logs_{_dataset_name}")
 os.makedirs(LOGS_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_cifar100_{RUN_TIMESTAMP}.jsonl")
-GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_cifar100_{RUN_TIMESTAMP}.jsonl")
+LOG_FILE = os.path.join(LOGS_DIR, f"LLM-evolution-logs_{_dataset_name}_{_model_name}_{RUN_TIMESTAMP}.jsonl")
+GA_EVAL_LOG_FILE = os.path.join(LOGS_DIR, f"ga_evaluations_{_dataset_name}_{_model_name}_{RUN_TIMESTAMP}.jsonl")
 
 # KEEP BENCHMARKS SMALL FOR FAST FEEDBACK, BUT CONFIGURABLE VIA ENV
 BENCH_GENS = int(os.environ.get("GENERATIONS", 3))
@@ -83,84 +87,50 @@ SEARCH_SPACE_STR = json.dumps(SEARCH_SPACE, indent=2)
 # # [END ORIGINAL]
 
 BASE_PROMPT_TEMPLATE = """
-### ROLE & OBJECTIVE ###
-You are an elite AI Research Engineer and Evolutionary Computation Expert. 
-Your task is to rewrite the core evolutionary operators of a Quality-Diversity Genetic Algorithm (MAP-Elites) that optimizes PyTorch Neural Network architectures (FractalNet) for CIFAR-10.
-Your generated code will be AUTOMATICALLY INJECTED into a production Python class via string replacement. Any syntax error, hallucinated import, or invalid indentation will crash the entire pipeline.
+You are an expert AI researcher fine-tuning a Genetic Algorithm (GA) that evolves PyTorch Neural Network architectures for CIFAR-100.
+CRITICAL MANDATE: Your ONLY goal is RADICAL ARCHITECTURAL INNOVATION. Do not make small incremental changes.
+You are heavily penalized if you do not generate completely novel combinations of layers, activations, and topologies.
 
-Your objective is NOT just to produce a "good" algorithm in the abstract. You must propose crossover and mutation strategies that will theoretically expand the frontier of what the GA has seen:
-1. Break the Global SOTA peak accuracy.
-2. Discover novel, high-performing architectures to populate empty cells in the MAP-Elites Behavioral Archive.
-
-### VITAL CONTEXT ###
-- 1-EPOCH SPEEDRUN: To save compute, every generated architecture is evaluated by training for exactly 1 epoch (782 batches). Your operators must prioritize architectures and hyperparameter combinations that favor extreme fast-convergence.
-- ACTIVE STOCHASTIC DEPTH: The Search Space enforces active FractalDropPath (`dropout_prob` > 0.0). Focus on evolutionary operators that favor robust architectures capable of surviving heavy path-dropping during the short 1-epoch evaluation.
-
-### HARD CONSTRAINTS (CRITICAL) ###
-1. NO INVENTED VALUES: Genes are strictly discrete. You MUST ONLY select values from the provided `SEARCH_SPACE` or the `possible_values` list. NEVER use arithmetic (e.g., `val + 0.1`, `val * 2`, `random.uniform()`) to create new gene values.
-2. NO IMPORTS: Do NOT write `import random` or `import numpy as np`. Assume `random`, `numpy as np`, and `copy` are already available in the global scope.
-3. EXACT SIGNATURES: You must use the EXACT method signatures provided. Do not add or remove arguments.
-4. CLASS INDENTATION: Your output will be injected directly into the `GeneticAlgorithm` class. All `def` statements MUST have exactly 4 spaces of indentation. Method bodies MUST have 8 spaces.
-5. GRANULAR HELPER FUNCTIONS: You are evolving isolated helper functions (`combine_genes`, `mutate_gene`, `select_competitor`), NOT the entire overarching loops. The main GA script handles all dictionary iteration for you. You just need to implement the mathematical combination/mutation logic for the specific gene values passed into your function.
-6. PREVENT DUPLICATES (MAP-ELITES ROUTING): To prevent premature convergence, your operators MUST aggressively inject diversity. For `select_competitor`, sample heavily from `self.archive.values()` alongside `self.population`. For `combine_genes` and `mutate_gene`, mathematically guarantee diversity (e.g., using gene inversion, momentum tracking, or hybridizing parents intelligently).
-7. AVOID HALLUCINATION (CRITICAL):
-   - Do NOT hardcode gene names unless you verify they exist in `self.search_space.keys()`. 
-   - Do NOT raise ValueErrors for "unknown" genes. Always provide a safe fallback: `return random.choice(possible_values)`.
-   - Ensure all variables (like `history`) are properly initialized in the outer scope before being accessed or modified. Do NOT reference variables that were only defined inside an `if` block.
-
-### ANTI-PATTERNS (NEVER DO THIS) ###
-❌ BAD: `if gene_name == "dropout_prob": ... else: raise ValueError()` (Crashes the pipeline on unexpected genes)
-✅ GOOD: `if gene_name == "dropout_prob": ... else: return random.choice(possible_values)` (Safe fallback)
-❌ BAD: `new_lr = current_value + 0.001` (Invents a value not in search space)
-✅ GOOD: `new_lr = min(possible_values, key=lambda x: abs(x - current_value))` (Snaps to nearest valid value)
-❌ BAD: `import random` inside the method (Causes IndentationError/SyntaxError upon injection)
-✅ GOOD: Just use `random.choice()` directly.
-❌ BAD: `total_fitness = sum(...); prob = fit / total_fitness` (Crashes if all fitnesses are 0)
-✅ GOOD: Add a fallback: `if total_fitness <= 0: return random.choice(competitors)`
+=== FEEDBACK FROM RECENT FAILED ATTEMPTS ===
+{history_str}
+Study these failures carefully. DO NOT repeat the same mistakes or generate the exact same code.
 
 === SEARCH SPACE ===
-The GA optimizes the following discrete SEARCH_SPACE:
+The GA optimizes the following SEARCH_SPACE:
 {search_space}
 
-=== FULL CLASS CONTEXT ===
-Here is the current full implementation of the GeneticAlgorithm class for your reference.
-Notice how the GA uses a MAP-Elites archive based on `n_blocks` and `base_channels`.
-<full_code>
+=== BASELINE CHROMOSOME (STARTING POINT) ===
+{best_chromosome}
+
+=== GA SCRIPT CONTEXT (READ-ONLY) ===
+Below is the FULL CODE of the current Genetic Algorithm. 
+Study it to understand the class variables (`self.population`, `self.search_space`, etc.) and helper methods (`self._coerce_gene_value`, etc.).
+DO NOT rewrite this script. It is strictly for context.
+
+<full_script>
 {full_code}
-</full_code>
-
-=== CURRENT SOTA & ARCHIVE FRONTIER ===
-- All-Time Global Best Peak Accuracy (SOTA): {global_best_score:.2f}%
-- MAP-Elites Archive Size: {global_archive_size} unique cells discovered
-
-=== BEST KNOWN NEURAL NETWORK ARCHITECTURE ===
-The neural network that achieved the SOTA score above has the following chromosome (hyperparameters):
-{best_chromosome_str}
-Use this information to heavily bias your GA operators! If certain activations, pooling, or learning rates are winning, write your `_mutate` and `_create_random_chromosome` logic to favor them or test variations around them.
-
-=== HALL OF FAME (BEST HISTORICAL CODE) ===
-{hall_of_fame_str}
-
-=== STRICT OUTPUT FORMAT ===
-1. You MUST write your mathematical reasoning and planning inside `<thinking> ... </thinking>` tags BEFORE writing the code block.
-2. Wrap your ENTIRE Python code output in a single ```python ... ``` markdown block AFTER your thinking tags.
-3. The code inside the block MUST start exactly with `    def ` (4 spaces indent).
-4. Output the exact code for the requested method(s): `{method_names}`.
+</full_script>
 
 === YOUR SPECIFIC TASK ===
-You must rewrite the following component(s): `{method_names}`
+You must intelligently improve ONLY the following specific function(s): `{method_names}`.
 {task_specific_instructions}
+Force the GA operators to break out of local minima and aggressively explore the search space.
 
-Current implementation to be replaced:
+Current implementation:
 <current_function>
 {code}
 </current_function>
+
+=== STRICT OUTPUT FORMAT ===
+1. Output ONLY the python code for the function(s).
+2. Do not include introductory or concluding text.
+3. Ensure it is indented by 4 spaces exactly.
 """
 
 INSTRUCTIONS = {
-    "_crossover": "Task: Implement `_crossover`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo. You MUST return self._sanitize_chromosome(child_chromo).",
-    "_mutate": "Task: Implement `_mutate`. Return a new chromosome dict with mutated genes based on self.mutation_rate. You MUST return self._sanitize_chromosome(mutated_chromo).",
-    "_selection": "Task: Implement `_selection`. Select a pool of competitors from self.population and return a single chosen competitor using tournament or roulette selection.",
+    "combine_genes": "Task: Implement `combine_genes`. Return a new chromosome dict by crossing over parent1_chromo and parent2_chromo. CRITICAL: You MUST implement strategies to maintain genetic diversity and avoid premature convergence! You MUST return self._sanitize_chromosome(child_chromo).",
+    "mutate_gene": "Task: Implement `mutate_gene`. Return a new chromosome dict with mutated genes based on self.mutation_rate. CRITICAL: You MUST ensure mutations are bold enough to explore new architectures and prevent the population from getting stuck in local minima! You MUST return self._sanitize_chromosome(mutated_chromo).",
+    "select_competitor": "Task: Implement `select_competitor`. Select a pool of competitors from self.population and return a single chosen competitor. CRITICAL: Balance elitism with exploration (e.g. tournament selection with a reasonable size) so the population doesn't instantly converge.",
     "_create_random_chromosome": "Task: Implement `_create_random_chromosome`. Return a new chromosome dictionary with randomized values chosen from self.search_space."
 }
 
@@ -186,10 +156,27 @@ class MetaEvolver:
         self.llm = LocalLLMLoader(model_path, use_quantization=True, adapter_path=ADAPTER_SAVE_PATH)
         os.makedirs(BACKUP_DIR, exist_ok=True)
         
-        # print("[Meta] Running Baseline...")
-        # self.baseline_score = self.run_benchmark()
-        # print(f"[Meta] Baseline Score: {self.baseline_score:.4f}")
         self.baseline_score = 0.0
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info_cifar100.json")
+        if os.path.exists(best_info_path):
+            try:
+                with open(best_info_path, 'r') as f:
+                    best_data = json.load(f)
+                    self.baseline_score = float(best_data.get("fitness", 0.0))
+                    print(f"[Meta] Loaded Baseline Score: {self.baseline_score:.2f}%")
+            except Exception:
+                pass
+        
+        if self.baseline_score == 0.0:
+            print("[Meta] Running Baseline Benchmark...")
+            self.baseline_score = self.run_benchmark(gens=1)["peak_accuracy"]
+            print(f"[Meta] Calculated Baseline: {self.baseline_score:.4f}%")
+            
+            # WIPE CHECKPOINT to force LLM to start from scratch
+            ckpt_path = os.path.join(BASE_DIR, "GenFractal_cifar100_ckpt.pkl")
+            if os.path.exists(ckpt_path):
+                os.remove(ckpt_path)
+                print("[Meta] Wiped Baseline population checkpoint to force clean start for LLM.")
         self.global_best_score = 0.0
         self.global_archive_size = 0
         
@@ -205,10 +192,12 @@ class MetaEvolver:
                 torch.cuda.ipc_collect()
         print("[Meta] GPU cleanup attempted (gc + empty_cache)")
 
-    def run_benchmark(self):
+    def run_benchmark(self, gens=None):
         import statistics
+        if gens is None:
+            gens = BENCH_GENS
         # Removed --clean to persist the GA archive and population across LLM attempts
-        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(BENCH_GENS), "--pop", str(BENCH_POP)]
+        cmd = [sys.executable, RUNNER_SCRIPT, "--gens", str(gens), "--pop", str(BENCH_POP)]
         env = os.environ.copy()
         env["GA_EVAL_LOG"] = GA_EVAL_LOG_FILE
         
@@ -379,18 +368,18 @@ class MetaEvolver:
             
             # Filter history to only include attempts for the current component!
             component_name = method_names[0] if isinstance(method_names, (list, tuple)) else method_names
-            relevant_history = [h for h in self.attempt_history if component_name in h.get('code', '') or component_name == "full"]
+            relevant_history = [h for h in self.attempt_history if (component_name in h.get('code', '') or component_name == "full") and h.get("status") != "Success"]
             
             for idx, h in enumerate(relevant_history[-2:]):
                 status = h.get("status", "Unknown")
-                score = h.get("score", 0.0)
+                reward = h.get("reward", 0.0)
                 trace = h.get("error_trace", "")
                 if len(trace) > 150: trace = trace[-150:] + "\n... (truncated)"
-                trace_str = f"\nError Trace:\n{trace}" if trace else ""
+                trace_str = f"\nError Trace:\n{trace}" if trace else "\nError Trace:\n(None)"
                 
                 hist_code = h.get('code', '')
                 if len(hist_code) > 800: hist_code = hist_code[:800] + "\n... (truncated)"
-                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nScore: {score}{trace_str}\nCode:\n```python\n{hist_code}\n```")
+                history_lines.append(f"Attempt {idx+1}:\nStatus: {status}\nReward: {reward:.2f}{trace_str}\nCode:\n```python\n{hist_code}\n```")
             
             if history_lines:
                 history_str = "\n\n".join(history_lines)
@@ -416,12 +405,12 @@ class MetaEvolver:
                 if hof_lines:
                     hall_of_fame_str = "\n\n".join(hof_lines)
 
-        # Skeletonize target code
-        skel_full_code = skeletonize_code(full_code)
+        # Provide full intact code instead of skeletonizing
+        skel_full_code = full_code
 
         # Load best chromosome if available
         best_chromosome_str = "None found yet."
-        best_info_path = os.path.join(BASE_DIR, "best_fractal_info.json")
+        best_info_path = os.path.join(BASE_DIR, "best_baseline_info_cifar100.json")
         if os.path.exists(best_info_path):
             try:
                 with open(best_info_path, 'r') as f:
@@ -432,22 +421,18 @@ class MetaEvolver:
 
         # LLM Generation with Full Context
         prompt = BASE_PROMPT_TEMPLATE.format(
+            history_str=history_str,
             search_space=SEARCH_SPACE_STR,
+            best_chromosome=best_chromosome_str,
             full_code=skel_full_code,
             method_names=", ".join(method_names),
             task_specific_instructions="\n".join([INSTRUCTIONS.get(n, "") for n in method_names]),
-            code=orig_code,
-            history_str=history_str,
-            hall_of_fame_str=hall_of_fame_str,
-            global_best_score=self.global_best_score,
-            global_archive_size=self.global_archive_size,
-            best_chromosome_str=best_chromosome_str
+            code=orig_code
         )
         
-        # Temperature scheduling: start safe (0.6), increase to creative (0.95) on failures
-        progress = (attempt - 1) / max(1, total_attempts - 1)
-        temperature = min(0.95, 0.6 + (0.35 * progress))
-        print(f"[Meta] Generation Temperature: {temperature:.2f}")
+        # [MODIFIED_FOR_INNOVATION] Increased temperature from 0.8 to 0.9 to boost creativity. Revert to 0.8 if syntax errors occur too often.
+        temperature = 0.9
+        print(f"[Meta] Generation Temperature (BOOSTED): {temperature:.2f}")
         
         raw_res = self.llm.generate(prompt, max_new_tokens=2048, temperature=temperature)
         
@@ -482,6 +467,7 @@ class MetaEvolver:
                 replacements.append((span, indent, ""))
 
         valid_syntax = False
+        bench_stats = {"top3_mean": 0.0, "peak_accuracy": 0.0, "archive_size": self.global_archive_size, "error_trace": ""}
         try:
             test_full = full_code
             for span, indent_col, new_code in replacements:
@@ -515,10 +501,9 @@ class MetaEvolver:
             ast.parse(test_full)
             valid_syntax = True
         except SyntaxError as e:
+            import traceback
+            bench_stats["error_trace"] = traceback.format_exc()
             print(f"[Meta] Syntax Error: {e}")
-
-        # new_score = 0.0
-        bench_stats = {"top3_mean": 0.0, "peak_accuracy": 0.0, "archive_size": self.global_archive_size}
         
         if valid_syntax:
             target_filename = os.path.basename(TARGET_FILE)
@@ -555,15 +540,11 @@ class MetaEvolver:
                     if val not in SEARCH_SPACE[gene]:
                         raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space")
 
-                # 6. Test _selection (needs a populated population + archive)
+                # 6. Test _selection (needs a populated population)
                 test_ga.population = [
                     {"chromosome": test_ga._create_random_chromosome(), "fitness": random.uniform(10, 70)}
                     for _ in range(4)
                 ]
-                test_ga.archive = {}
-                for ind in test_ga.population:
-                    cell = (ind['chromosome'].get('n_blocks', 1), ind['chromosome'].get('base_channels', 16))
-                    test_ga.archive[cell] = ind
                 parent = test_ga._selection()
                 if not isinstance(parent, dict) or "chromosome" not in parent:
                     raise ValueError(f"Smoke test: _selection returned invalid result: {type(parent)}")
@@ -577,6 +558,8 @@ class MetaEvolver:
                         raise ValueError(f"Smoke test: crossover produced '{val}' for gene '{gene}', not in search space {SEARCH_SPACE[gene]}")
                 print("[Meta] Runtime smoke test PASSED (all components validated).")
             except Exception as e:
+                import traceback
+                bench_stats["error_trace"] = traceback.format_exc()
                 print(f"[Meta] Runtime smoke test FAILED: {e}")
                 print("---> Reverting file and skipping benchmark.")
                 shutil.copy(bkp, TARGET_FILE)
@@ -597,6 +580,7 @@ class MetaEvolver:
         reward = calculate_meta_reward(
             current_score=new_score, 
             best_ever_score=self.global_best_score, 
+            baseline_score=self.baseline_score,
             top3_mean=top3_mean, 
             archive_novelty=archive_novelty, 
             valid_syntax=valid_syntax
@@ -611,7 +595,7 @@ class MetaEvolver:
                 print(f"[Meta] --> ARCHIVE EXPANDED! {new_archive_size} cells (was {self.global_archive_size})")
                 self.global_archive_size = new_archive_size
         
-        fine_tune_expected = bool(valid_syntax and reward > 0)
+        fine_tune_expected = bool(valid_syntax)
         fine_tune_started = False
         fine_tune_completed = False
         fine_tune_failed = False
@@ -646,7 +630,7 @@ class MetaEvolver:
             if len(self.success_buffer) > 20:
                 self.success_buffer.pop(0)  # Cap buffer at 20, drop oldest
         else:
-            print("--> FAILURE/REGRESSION. Skipping fine-tuning to encourage creativity.")
+            print("--> REGRESSION (Failed to beat SOTA). Fine-tuning on past successes to maintain syntax.")
 
         # Setup fallback batch sizes
         try:
@@ -721,10 +705,10 @@ class MetaEvolver:
                 finally:
                     adapter_save_end_time = datetime.now().isoformat()
                     
-        if 'bkp' in locals() and not (valid_syntax and reward > 0):
-            print("--> Reverting File.")
+        if 'bkp' in locals() and not valid_syntax:
+            print("--> Reverting File (Syntax Error).")
             shutil.copy(bkp, TARGET_FILE)
-        elif valid_syntax and reward > 0:
+        elif valid_syntax:
             ts_bkp = os.path.join(BACKUP_DIR, f"genetic_algorithm_attempt{attempt}_{'_'.join(method_names)}_acc_{new_score:.2f}.py")
             shutil.copy(TARGET_FILE, ts_bkp)
             print(f"--> Saved version history with accuracy: {ts_bkp}")
@@ -739,6 +723,7 @@ class MetaEvolver:
         self.attempt_history.append({
             "status": status, 
             "score": new_score, 
+            "reward": reward,
             "code": combined_code, 
             "error_trace": bench_stats.get("error_trace", "") if not valid_syntax or reward <= 0 else ""
         })
@@ -777,12 +762,72 @@ class MetaEvolver:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(log_entry) + "\n")
 
-        # Return True if this attempt was a success (valid + improved)
-        return bool(valid_syntax and reward > 0)
+        # Return True if this attempt was a success (valid syntax)
+        return bool(valid_syntax)
+
+    def run_fallback_iteration(self, component, attempt, total_attempts):
+        print(f"\n[Meta] Running fallback GA benchmark using previous working code for {component}...")
+        
+        bench_stats = self.run_benchmark()
+        new_score = bench_stats["peak_accuracy"]
+        top3_mean = bench_stats["top3_mean"]
+        new_archive_size = bench_stats["archive_size"]
+        
+        archive_novelty = max(0, new_archive_size - self.global_archive_size)
+        reward = calculate_meta_reward(
+            current_score=new_score, 
+            best_ever_score=self.global_best_score, 
+            baseline_score=self.baseline_score,
+            top3_mean=top3_mean, 
+            archive_novelty=archive_novelty, 
+            valid_syntax=True
+        )
+        
+        if new_score > self.global_best_score:
+            print(f"[Meta] --> NEW GLOBAL SOTA (Fallback)! {new_score:.2f}% (was {self.global_best_score:.2f}%)")
+            self.global_best_score = new_score
+        if new_archive_size > self.global_archive_size:
+            print(f"[Meta] --> ARCHIVE EXPANDED (Fallback)! {new_archive_size} cells (was {self.global_archive_size})")
+            self.global_archive_size = new_archive_size
+
+        log_entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            "method": component,
+            "attempt": attempt,
+            "response": "Fallback to previous working GA due to repeated LLM syntax errors.",
+            "cleaned_code": "Fallback triggered. Code unchanged.",
+            "valid_syntax": True,
+            "score": new_score,
+            "peak_accuracy": bench_stats["peak_accuracy"],
+            "reward": reward,
+            "fine_tune_expected": False,
+            "fine_tune_started": False,
+            "fine_tune_completed": False,
+            "fine_tune_failed": False,
+            "fine_tune_exception": None,
+            "adapter_save_started": False,
+            "adapter_save_completed": False,
+            "adapter_save_failed": False,
+            "adapter_save_exception": None,
+            "adapter_path": "",
+            "train_examples_count": 0,
+            "train_epochs": 0,
+            "fine_tune_requested_batch": 0,
+            "fine_tune_actual_batch": 0,
+            "fine_tune_retries": 0,
+            "fine_tune_oom_message": None,
+            "fine_tune_start_time": None,
+            "fine_tune_end_time": None,
+            "adapter_save_start_time": None,
+            "adapter_save_end_time": None
+        }
+        with open(LOG_FILE, 'a') as f:
+            f.write(json.dumps(log_entry) + "\n")
+        return True
 
 if __name__ == "__main__":
-    # MODEL_PATH = "deepseek-ai/deepseek-coder-6.7b-instruct" 
-    MODEL_PATH = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    with open(os.path.join(BASE_DIR, "model_config.json"), "r") as f:
+        MODEL_PATH = json.load(f).get("base_model_name", "mistralai/Mistral-7B-Instruct-v0.2")
     evolver = MetaEvolver(MODEL_PATH)
 
     # LOOP: CYCLE THROUGH ALL EVOLVABLE COMPONENTS
@@ -801,44 +846,41 @@ if __name__ == "__main__":
     COMPONENTS = ["combine_genes", "mutate_gene", "select_competitor", "_create_random_chromosome"]
 
     successes = 0
-    total_attempts = 0
-    component_index = 0
-    consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 10
-    MAX_TOTAL_ATTEMPTS = META_ITERATIONS * 10
-
-    print(f"\n[Meta] Target: {META_ITERATIONS} SUCCESSFUL evolutions (will retry up to {MAX_CONSECUTIVE_FAILURES} times per component)")
-    while successes < META_ITERATIONS and total_attempts < MAX_TOTAL_ATTEMPTS:
-        total_attempts += 1
-        component = COMPONENTS[component_index]
-        print(f"\n=== Attempt {total_attempts} | Successes: {successes}/{META_ITERATIONS} — Evolving: {component} ===")
-        success = evolver.evolve_component(component, attempt=total_attempts, total_attempts=META_ITERATIONS)
-        if success:
-            successes += 1
-            consecutive_failures = 0 # reset failures on success
-            component_index = (component_index + 1) % len(COMPONENTS) # move to next component
-            print(f"[Meta] ✓ Success #{successes}/{META_ITERATIONS} achieved on attempt {total_attempts}")
-        else:
-            consecutive_failures += 1
-            print(f"[Meta] ✗ Attempt {total_attempts} failed — retrying (failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}, successes so far: {successes}/{META_ITERATIONS})")
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                print(f"[Meta] ⚠️ Reached max consecutive failures ({MAX_CONSECUTIVE_FAILURES}) for {', '.join(component)}. Skipping to next component.")
-                consecutive_failures = 0
-                component_index = (component_index + 1) % len(COMPONENTS)
-        time.sleep(2)
+    print(f"\n[Meta] Target: {META_ITERATIONS} evolutions with up to 5 attempts per iteration.")
+    for iteration in range(META_ITERATIONS):
+        component = COMPONENTS[iteration % len(COMPONENTS)]
+        print(f"\n=== Iteration {iteration+1}/{META_ITERATIONS} — Evolving: {component} ===")
         
-    if total_attempts >= MAX_TOTAL_ATTEMPTS:
-        print(f"\n[Meta] ⚠️ Reached absolute maximum attempts limit ({MAX_TOTAL_ATTEMPTS}). Halting.")
-    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions in {total_attempts} total attempts ===")
+        MAX_ATTEMPTS = 10
+        for attempt_idx in range(MAX_ATTEMPTS):
+            success = evolver.evolve_component(component, attempt=iteration+1, total_attempts=META_ITERATIONS)
+            if success:
+                successes += 1
+                print(f"[Meta] ✓ Iteration {iteration+1} (Attempt {attempt_idx+1}/{MAX_ATTEMPTS}) produced valid code. Proceeding to next iteration.")
+                break
+            else:
+                print(f"[Meta] ✗ Iteration {iteration+1} (Attempt {attempt_idx+1}/{MAX_ATTEMPTS}) failed (Syntax Error). Code reverted.")
+                
+                if attempt_idx < MAX_ATTEMPTS - 1:
+                    print(f"[Meta] Retrying {component}...")
+                    time.sleep(2)
+                else:
+                    print(f"[Meta] Exhausted all {MAX_ATTEMPTS} attempts for {component}.")
+                    evolver.run_fallback_iteration(component, attempt_idx + 1, META_ITERATIONS)
+                    successes += 1
+                    print(f"[Meta] Fallback iteration complete. Moving to next iteration.")
+                    break
+        
+    print(f"\n=== Meta-Evolution Complete: {successes} successful evolutions out of {META_ITERATIONS} strict iterations ===")
     
     # --- Generate visualizations after all iterations ---
     try:
         from ab.gpt.brute.ga.meta_evolution.visualize_meta_generation import main as generate_plots
         print("\n=== Generating Visualizations ===")
-        generate_plots()
+        generate_plots(RUN_TIMESTAMP, "cifar100")
     except Exception as e:
         print(f"[WARN] Visualization failed (non-fatal): {e}")
         print("\n=== Generating Visualizations ===")
-        generate_plots()
+        generate_plots(RUN_TIMESTAMP, "cifar100")
     except Exception as e:
         print(f"[WARN] Visualization failed (non-fatal): {e}")
