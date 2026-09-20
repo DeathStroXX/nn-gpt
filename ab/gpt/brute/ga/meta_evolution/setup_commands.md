@@ -119,3 +119,15 @@ kubectl get pods
 ```bash
 kubectl get jobs
 ```
+
+---
+
+## 6. Unified Start Command
+
+**To restart or run ALL 4 jobs freshly at once:**
+```bash
+kubectl delete -f meta_evol_tune_nngpt_cifar10.json --ignore-not-found=true && kubectl apply -f meta_evol_tune_nngpt_cifar10.json && \
+kubectl delete -f base_evol_tune_nngpt_cifar10.json --ignore-not-found=true && kubectl apply -f base_evol_tune_nngpt_cifar10.json && \
+kubectl delete -f meta_evol_tune_nngpt_cifar100.json --ignore-not-found=true && kubectl apply -f meta_evol_tune_nngpt_cifar100.json && \
+kubectl delete -f base_evol_tune_nngpt_cifar100.json --ignore-not-found=true && kubectl apply -f base_evol_tune_nngpt_cifar100.json
+```

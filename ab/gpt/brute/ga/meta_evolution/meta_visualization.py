@@ -351,13 +351,10 @@ def plot_generation_accuracy(records, llm_entries, out_dir, saved_files, suffix=
         
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
         ax.tick_params(colors="black")
-        
+        import matplotlib.ticker as ticker
         max_x = max(gen_numbers) if gen_numbers else 5
-        xticks = list(range(0, max_x + 5, 5))
-        if 1 not in xticks: xticks.insert(1, 1)
-        ax.set_xticks(xticks)
-        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
-            
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(5 if max_x >= 10 else 1))
+
         if running_peaks:
             upper_limit = min(100, max(running_peaks) + 5)
             lower_limit = max(0, min(min(avg_accuracies), min(peak_accuracies)) - 5)
@@ -387,12 +384,16 @@ def plot_population_diversity(records, llm_entries, out_dir, saved_files, suffix
         _warn("No records found — skipping population_diversity.png")
         return
 
-    batches, positions = [], []
+    batches, positions, unique_counts = [], [], []
     for g in generations:
         accs = [e["accuracy"] for e in g["evals"] if e.get("accuracy") is not None]
         if accs:
             batches.append(accs)
             positions.append(g["generation"])
+            
+            uids = [e.get("uid", e.get("checksum", "")) for e in g["evals"]]
+            unique_uids = set(uids) - {""}
+            unique_counts.append(len(unique_uids) if unique_uids else len(g["evals"]))
 
     with plt.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(max(8, len(batches) * 0.5), 5))
@@ -400,21 +401,26 @@ def plot_population_diversity(records, llm_entries, out_dir, saved_files, suffix
             batches,
             positions=positions,
             patch_artist=True,
-            boxprops=dict(facecolor="#2a3a6e", color=ACCENT1),
-            medianprops=dict(color=ACCENT2, linewidth=2),
+            boxprops=dict(facecolor="#2a3a6e", color="#3b82f6", alpha=0.7),
+            medianprops=dict(color="#f97316", linewidth=2),
             whiskerprops=dict(color="#6a7aad"),
             capprops=dict(color="#6a7aad"),
-            flierprops=dict(marker="o", color=ACCENT3, alpha=0.5, markersize=4),
+            flierprops=dict(marker="o", color="#ef4444", alpha=0.5, markersize=4),
         )
         
+        import matplotlib.ticker as ticker
         max_x = max(positions) if positions else 5
-        xticks = list(range(0, max_x + 5, 5))
-        if 1 not in xticks: xticks.insert(1, 1)
-        ax.set_xticks(xticks)
-        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
-            
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(5 if max_x >= 10 else 1))
+
         _apply_style(ax, "Population Diversity per Generation",
                      "Number of Generation", "Accuracy (%)")
+                     
+        ax_twin = ax.twinx()
+        ax_twin.plot(positions, unique_counts, label="Unique Architectures Evaluated",
+                     color="#10b981", linewidth=2.0, linestyle="--", marker="o", markersize=4)
+        ax_twin.set_ylabel("Unique Architectures Count", fontsize=13, color="#10b981")
+        ax_twin.tick_params(axis='y', labelcolor="#10b981")
+        
         _save(fig, os.path.join(out_dir, "population_diversity.png"), saved_files, suffix)
 
 
@@ -459,12 +465,10 @@ def plot_best_vs_avg_accuracy(records, llm_entries, out_dir, saved_files, suffix
         ax.plot(xs, median_per_batch, color="#2ca02c", alpha=0.9, linestyle="--", label="Median Accuracy", zorder=2, linewidth=2)
         ax.plot(xs, best_per_batch, color=ACCENT1, linewidth=2.5, marker="D", markersize=4, label="Best Accuracy", zorder=3)
                 
+        import matplotlib.ticker as ticker
         max_x = max(xs) if xs else 5
-        xticks = list(range(0, max_x + 5, 5))
-        if 1 not in xticks: xticks.insert(1, 1)
-        ax.set_xticks(xticks)
-        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
-            
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(5 if max_x >= 10 else 1))
+
         _apply_style(ax, "Best vs Average Accuracy per Generation",
                      "Number of Generation", "Accuracy (%)")
         ax.legend()
@@ -506,12 +510,10 @@ def plot_time_per_generation(records, llm_entries, out_dir, saved_files, suffix=
         ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
         ax.tick_params(colors="black")
         
+        import matplotlib.ticker as ticker
         max_x = max(gen_numbers) if gen_numbers else 5
-        xticks = list(range(0, max_x + 5, 5))
-        if 1 not in xticks: xticks.insert(1, 1)
-        ax.set_xticks(xticks)
-        ax.set_xticklabels([str(x) for x in xticks], rotation=45, ha='right')
-            
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(5 if max_x >= 10 else 1))
+
         plt.tight_layout()
         path = os.path.join(out_dir, "time_per_generation.png")
         _save(fig, path, saved_files, suffix)

@@ -42,7 +42,7 @@
               },
               {
                 "name": "POPULATION_SIZE",
-                "value": "20"
+                "value": "10"
               },
               {
                 "name": "GENERATIONS",
@@ -78,12 +78,12 @@
               "requests": {
                 "nvidia.com/gpu": 1,
                 "cpu": 10,
-                "memory": "48Gi"
+                "memory": "24Gi"
               },
               "limits": {
                 "nvidia.com/gpu": 1,
                 "cpu": 10,
-                "memory": "48Gi"
+                "memory": "24Gi"
               }
             },
             "volumeMounts": [

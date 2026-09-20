@@ -196,9 +196,18 @@ def main(dataset=None, log_file_override=None):
     # ax.set_title("Baseline GA: Accuracy per Generation", fontsize=15, fontweight="bold")
     ax.set_title(f"{title_prefix}: Accuracy per Generation", fontsize=15, fontweight="bold")
     ax.legend(fontsize=11, loc="lower right")
-    # ax.grid(True, alpha=0.3)
     ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
-    ax.set_xlim(1, len(generations))
+    
+    if len(generations) <= 1:
+        ax.set_xlim(0, 2)
+    else:
+        ax.set_xlim(1, len(generations))
+        
+    # Handle flat-line edge case gracefully
+    min_acc = min(avg_accuracies) if avg_accuracies else 0.0
+    max_acc = max(running_peaks) if running_peaks else 0.0
+    if max_acc - min_acc < 1.0:
+        ax.set_ylim(max(0.0, min_acc - 5.0), min(100.0, max_acc + 5.0))
 
     # Annotate final running best
     ax.annotate(f"{running_peaks[-1]:.2f}%",
@@ -278,7 +287,10 @@ def main(dataset=None, log_file_override=None):
     ax2.legend(fontsize=11, loc="upper right")
     # ax2.grid(True, alpha=0.3)
     ax2.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
-    ax2.set_xlim(1, len(generations))
+    if len(generations) <= 1:
+        ax2.set_xlim(0, 2)
+    else:
+        ax2.set_xlim(1, len(generations))
     
     plt.tight_layout()
     plot_time_path = os.path.join(plot_dir, f"baseline_time_per_generation_{suffix}.png")
@@ -316,7 +328,11 @@ def main(dataset=None, log_file_override=None):
     ax3.set_ylabel("Accuracy Distribution (%)", fontsize=13)
     ax3.set_title(f"{title_prefix}: Generational Population Diversity", fontsize=15, fontweight="bold")
     ax3.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
-    ax3.set_xlim(0.5, len(generations) + 0.5)
+    
+    if len(generations) <= 1:
+        ax3.set_xlim(0, 2)
+    else:
+        ax3.set_xlim(0.5, len(generations) + 0.5)
 
     ax3_twin = ax3.twinx()
     ax3_twin.plot(gen_numbers, unique_counts, label="Unique Architectures Evaluated",
